@@ -145,16 +145,21 @@ impl Fairing for CsrfFairing {
 
     fn on_request(&self, request: &mut Request, data: &Data) {
         match request.method() {
-            Get | Head | Connect | Trace | Options => return,
+            Get | Head | Connect | Trace | Options => {
+                request.guard::<CsrfToken>();;//force regeneration of csrf cookies
+                return
+            },
             _ => {},
         };
 
         let (csrf_engine,_) = request.guard::<State<(AesGcmCsrfProtection, i64)>>().unwrap().inner();
 
+
         let cookie = request.cookies().get(csrf::CSRF_COOKIE_NAME)
             .and_then(|cookie| BASE64.decode(cookie.value().as_bytes()).ok())
             .and_then(|cookie| csrf_engine.parse_cookie(&cookie).ok());
        
+        request.guard::<CsrfToken>();;//force regeneration of csrf cookies
 
         let token = parse_args(from_utf8(data.peek()).unwrap_or(""))
             .filter(|(key,_)|key==&csrf::CSRF_FORM_FIELD)
@@ -166,7 +171,7 @@ impl Fairing for CsrfFairing {
             if let Some(cookie) = cookie {
                 if csrf_engine.verify_token_pair(&token, &cookie) {
                     return;
-                }
+                } 
             }
         }
 
