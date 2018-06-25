@@ -11,14 +11,14 @@
 //! ## Usage
 //!
 //! First add it to your `Cargo.toml` (at the moment using git version, because it was made mainly
-//! for [https://github.com/Plume-org/Plume](Plume) and I didn't have the time to backport it to
+//! for [Plume](https://github.com/Plume-org/Plume) and I didn't have the time to backport it to
 //! older Rocket version)
 //!
-//! ```tome
+//! ```toml
 //! [dependencies.rocket_csrf]
 //! git = "https://github.com/fdb-hiroshima/rocket_csrf"
 //! rev = "50947b8715ae1fa7b73e60b65fdbd1aaf7754f10"
-//!
+//! ```
 //! Then, in your `main.rs`:
 //!
 //! ```rust
@@ -32,7 +32,7 @@
 //!                 //configure it here
 //!                 .finish().unwrap())
 //!         //add your routes, other fairings...
-//!         .lanch();
+//!         .launch();
 //! }
 //! ```
 //!
@@ -63,18 +63,17 @@ use std::env;
 use std::io::Read;
 use std::str::from_utf8;
 
-/// Builder for [`CsrfFairing`]
+/// Builder for [CsrfFairing](struct.CsrfFairing.html)
 ///
-/// The `CsrfFairingBuilder` type allows for creation and configuration of a [`CsrfFairing`], the
+/// The `CsrfFairingBuilder` type allows for creation and configuration of a [CsrfFairing](struct.CsrfFairing.html), the
 /// main struct of this crate.
 ///
 /// # Usage
 /// A Builder is created via the [`new`] method. Then you can configure it with others provided
-/// methods, and get a [`CsrfFairing`] by a call to [`finalize`]
+/// methods, and get a [CsrfFairing](struct.CsrfFairing.html) by a call to [`finalize`]
 ///
-/// [`CsrfFairing`]: /rocket_csrf/struct.CsrfFairing.html
-/// [`new`]: /rocket_csrf/struct.CsrfFairing.html#method.new
-/// [`finalize`]: /rocket_csrf/struct.CsrfFairing.html#method.finalize
+/// [`new`]: #method.new
+/// [`finalize`]: #method.finalize
 ///
 /// ## Examples
 ///
@@ -157,7 +156,7 @@ impl CsrfFairingBuilder {
     /// circunvence this issue, you can add a (not so) exception matching the static route before
     /// the dynamic one, and redirect it to the default target manually.
     ///
-    /// [`add_exceptions`]: /rocket_csrf/struct.CsrfFairing.html#method.add_exceptions
+    /// [`add_exceptions`]: #method.add_exceptions
     ///
     /// # Example
     ///
@@ -182,7 +181,7 @@ impl CsrfFairingBuilder {
     /// Add the to list of exceptions which will not be redirected to the default route. See
     /// [`set_exceptions`] for more informations on how exceptions work.
     ///
-    /// [`set_exceptions`]: /rocket_csrf/struct.CsrfFairing.html#method.set_exceptions
+    /// [`set_exceptions`]: #method.set_exceptions
     pub fn add_exceptions(mut self, exceptions: Vec<(String, String, Method)>) -> Self {
         self.exceptions.extend(exceptions);
         self
@@ -214,9 +213,8 @@ impl CsrfFairingBuilder {
 
     /// Set if this should modify response to insert tokens automatically in all forms. If true,
     /// this will insert tokens in all forms it encounter, if false, you will have to add them via
-    /// [`CsrfToken`], which you may obtain via request guards.
+    /// [CsrfFairing](struct.CsrfFairing.html), which you may obtain via request guards.
     ///
-    /// [`CsrfToken`]: /rocket_csrf/struct.CsrfToken.html
     pub fn set_auto_insert(mut self, auto_insert: bool) -> Self {
         self.auto_insert = auto_insert;
         self
@@ -292,7 +290,7 @@ impl CsrfFairingBuilder {
 ///
 /// The `CsrfFairing` type protect a Rocket instance against Csrf attack by requesting mendatory
 /// token on any POST, PUT, DELETE or PATCH request.
-/// This is created via a [`CsrfFairingBuilder`], and implement nothing else than the `Fairing` trait.
+/// This is created via a [CsrfFairingBuilder](struct.CsrfFairingBuilder.html), and implement nothing else than the `Fairing` trait.
 ///
 /// [`CsrfFairingBuilder`]: /rocket_csrf/struct.CsrfFairing.html
 pub struct CsrfFairing {
