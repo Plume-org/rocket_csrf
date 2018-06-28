@@ -1,4 +1,5 @@
 #![deny(missing_docs)]
+#![cfg_attr(feature = "cargo-clippy", deny(warnings))]
 //! # Rocket Csrf
 //!
 //! A crate to protect you application against csrf.
@@ -242,8 +243,7 @@ impl CsrfFairingBuilder {
         let secret = self.secret.unwrap_or_else(|| {
             //use provided secret if one is
             env::vars()
-                .filter(|(key, _)| key == "ROCKET_SECRET_KEY")
-                .next()
+                .find(|(key, _)| key == "ROCKET_SECRET_KEY")
                 .and_then(|(_, value)| {
                     let b64 = BASE64.decode(value.as_bytes());
                     if let Ok(b64) = b64 {
@@ -267,7 +267,7 @@ impl CsrfFairingBuilder {
         let default_target = Path::from(&self.default_target.0);
         let mut hashmap = HashMap::new();
         hashmap.insert("uri", "");
-        if default_target.map(hashmap).is_none() {
+        if default_target.map(&hashmap).is_none() {
             return Err(());
         } //verify if this path is valid as default path, i.e. it have at most one dynamic part which is <uri>
         Ok(CsrfFairing {
@@ -278,11 +278,17 @@ impl CsrfFairingBuilder {
                 .iter()
                 .map(|(a, b, m)| (Path::from(&a), Path::from(&b), *m))//TODO verify if source and target are compatible
                 .collect(),
-            secret: secret,
+            secret,
             auto_insert: self.auto_insert,
             auto_insert_disable_prefix: self.auto_insert_disable_prefix,
             auto_insert_max_size: self.auto_insert_max_size,
         })
+    }
+}
+
+impl Default for CsrfFairingBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -360,9 +366,9 @@ impl Fairing for CsrfFairing {
 
         //Request reaching here are violating Csrf protection
 
-        for (src, dst, method) in self.exceptions.iter() {
+        for (src, dst, method) in &self.exceptions {
             if let Some(param) = src.extract(&request.uri().to_string()) {
-                if let Some(destination) = dst.map(param) {
+                if let Some(destination) = dst.map(&param) {
                     request.set_uri(destination);
                     request.set_method(*method);
                     return;
@@ -376,7 +382,7 @@ impl Fairing for CsrfFairing {
         let uri = Uri::percent_encode(&uri);
         let mut param: HashMap<&str, &str> = HashMap::new();
         param.insert("uri", &uri);
-        request.set_uri(self.default_target.0.map(param).unwrap());
+        request.set_uri(self.default_target.0.map(&param).unwrap());
         request.set_method(self.default_target.1)
     }
 
@@ -391,9 +397,7 @@ impl Fairing for CsrfFairing {
         if self
             .auto_insert_disable_prefix
             .iter()
-            .filter(|prefix| uri.starts_with(*prefix))
-            .next()
-            .is_some()
+            .any(|prefix| uri.starts_with(prefix))
         {
             return;
         } //if request is on an ignored prefix, ignore it
@@ -413,19 +417,19 @@ impl Fairing for CsrfFairing {
             if len <= self.auto_insert_max_size {
                 //if this is a small enought body, process the full body
                 let mut res = Vec::with_capacity(len as usize);
-                CsrfProxy::from(body_reader, token)
+                CsrfProxy::from(body_reader, &token)
                     .read_to_end(&mut res)
                     .unwrap();
                 response.set_sized_body(std::io::Cursor::new(res));
             } else {
                 //if body is of known but long size, change it to a stream to preserve memory, by encapsulating it into our "proxy" struct
                 let body = body_reader;
-                response.set_streamed_body(Box::new(CsrfProxy::from(body, token)));
+                response.set_streamed_body(Box::new(CsrfProxy::from(body, &token)));
             }
         } else {
             //if body is of unknown size, encapsulate it into our "proxy" struct
             let body = body.into_inner();
-            response.set_streamed_body(Box::new(CsrfProxy::from(body, token)));
+            response.set_streamed_body(Box::new(CsrfProxy::from(body, &token)));
         }
     }
 }
@@ -450,17 +454,17 @@ struct CsrfProxy<'a> {
 }
 
 impl<'a> CsrfProxy<'a> {
-    fn from(underlying: Box<Read + 'a>, token: CsrfToken) -> Self {
-        let tag_begin = "<input type=\"hidden\" name=\"csrf-token\" value=\"".as_bytes();
+    fn from(underlying: Box<Read + 'a>, token: &CsrfToken) -> Self {
+        let tag_begin = b"<input type=\"hidden\" name=\"csrf-token\" value=\"";
         let tag_middle = token.value.as_bytes();
-        let tag_end = "\">".as_bytes();
+        let tag_end = b"\">";
         let mut token = Vec::new();
         token.extend_from_slice(tag_begin);
         token.extend_from_slice(tag_middle);
         token.extend_from_slice(tag_end);
         CsrfProxy {
-            underlying: underlying,
-            token: token,
+            underlying,
+            token,
             buf: Vec::new(),
             state: ParseState::Reset,
             insert_tag: None,
@@ -654,7 +658,7 @@ impl<'a, 'r> FromRequest<'a, 'r> for CsrfToken {
         match csrf_engine.generate_token_pair(token_value.as_ref(), *duration) {
             Ok((token, cookie)) => {
                 let mut c = Cookie::new(csrf::CSRF_COOKIE_NAME, cookie.b64_string());
-                cookies.add(c); //todo add a timeout and a same_site policy to the cookie
+                cookies.add(c); //TODO add a timeout, same_site, http_only and secure to the cookie
                 Outcome::Success(CsrfToken {
                     value: BASE64URL_NOPAD.encode(token.value()),
                 })
@@ -727,7 +731,7 @@ impl Path {
                 Some(v) => {
                     if let Some(reference) = reference.next() {
                         match reference {
-                            PathPart::Static(refe) => if refe != &v {
+                            PathPart::Static(refe) => if refe != v {
                                 //static, but not the same, fail to parse
                                 return None;
                             },
@@ -776,10 +780,10 @@ impl Path {
         Some(res)
     }
 
-    fn map(&self, param: HashMap<&str, &str>) -> Option<String> {
+    fn map(&self, param: &HashMap<&str, &str>) -> Option<String> {
         //Generate a path from a reference and a hashmap
         let mut res = String::new();
-        for seg in self.path.iter() {
+        for seg in &self.path {
             //TODO add a / if no elements in self.path
             res.push('/');
             match seg {
@@ -810,12 +814,12 @@ enum PathPart {
     Dynamic(String),
 }
 
-fn parse_args<'a>(args: &'a str) -> impl Iterator<Item = (&'a str, &'a str)> {
+fn parse_args(args: &str) -> impl Iterator<Item = (&str, &str)> {
     //transform a group of argument into an iterator of key and value
     args.split('&').filter_map(|kv| parse_keyvalue(&kv))
 }
 
-fn parse_keyvalue<'a>(kv: &'a str) -> Option<(&'a str, &'a str)> {
+fn parse_keyvalue(kv: &str) -> Option<(&str, &str)> {
     //convert a single key-value pair into a key and a value
     if let Some(pos) = kv.find('=') {
         let (key, value) = kv.split_at(pos + 1);
