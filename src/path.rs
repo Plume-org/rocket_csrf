@@ -146,3 +146,50 @@ enum PathPart {
     Static(String),
     Dynamic(String),
 }
+
+#[cfg(test)]
+mod tests{
+    use path::Path;
+    use std::collections::HashMap;
+    #[test]
+    fn test_static_path_without_query() {
+        let no_query = Path::from("/path/no_query");
+        assert!(no_query.extract("/path/something").is_none());
+        assert!(no_query.extract("/path").is_none());
+        assert!(no_query.extract("/path/no_query/longer").is_none());
+        assert!(no_query.extract("/path/no_query?with=query").is_none());
+
+        let hashmap = no_query.extract("/path/no_query").unwrap();
+        assert_eq!(hashmap.len(), 0);
+
+        assert_eq!(no_query.map(&HashMap::new()).unwrap(), "/path/no_query");
+
+        let mut hashmap = HashMap::new();
+        hashmap.insert("key","value");
+        assert_eq!(no_query.map(&hashmap).unwrap(), "/path/no_query");
+    }
+    
+    #[test]
+    fn test_static_path_with_query() {
+        let query = Path::from("/path/query?param=value&param2=value2");
+        assert!(query.extract("/path/query").is_none());
+        assert!(query.extract("/path/other?param=value&param2=value2").is_none());
+        assert!(query.extract("/path/query/longer?param=value&param2=value2").is_none());
+        assert!(query.extract("/path?param=value&param2=value2").is_none());
+
+        let hashmap = query.extract("/path/query?param=value&param2=value2").unwrap();
+        assert_eq!(hashmap.len(), 0);
+
+        let hashmap = query.extract("/path/query?param2=value2&param=value").unwrap();
+        assert_eq!(hashmap.len(), 0);
+
+        let uri = query.map(&HashMap::new()).unwrap();
+        assert!(uri=="/path/query?param=value&param2=value2" || uri=="/path/query?param2=value2&param=value");
+
+
+        let mut hashmap = HashMap::new();
+        hashmap.insert("key","value");
+        let uri = query.map(&hashmap).unwrap();
+        assert!(uri=="/path/query?param=value&param2=value2" || uri=="/path/query?param2=value2&param=value");
+    }
+}
