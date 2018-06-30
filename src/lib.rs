@@ -22,16 +22,17 @@
 //! ```
 //! Then, in your `main.rs`:
 //!
-//! ```rust
-//! extern crate rocket_csrf;
-//!
-//! //...
+//!  ```rust,no_run
+//! # extern crate rocket;
+//! # extern crate rocket_csrf;
+//! use rocket_csrf::CsrfFairingBuilder;
+//! # use rocket::Rocket;
 //!
 //! fn main() {
 //!     rocket::ignite()
 //!         .attach(rocket_csrf::CsrfFairingBuilder::new()
 //!                 //configure it here
-//!                 .finish().unwrap())
+//!                 .finalize().unwrap())
 //!         //add your routes, other fairings...
 //!         .launch();
 //! }

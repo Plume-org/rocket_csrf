@@ -4,7 +4,6 @@ dist: trusty
 sudo: true
 os:
   - linux
-  - osx
 
 rust:
   - nightly
@@ -26,31 +25,27 @@ script:
   - cargo build
   - cargo test
   - |
-      if [[ "$TRAVIS_RUST_VERSION" == "nightly" && $CLIPPY ]]; then
+      if [[ $CLIPPY ]]; then
         cargo clippy
       fi
 
 before_script:
   - |
-      if [[ "$TRAVIS_RUST_VERSION" == "nightly" ]]; then
-        ( ( cargo install clippy && export CLIPPY=true ) || export CLIPPY=false );
-      fi
+        ( cargo install clippy && export CLIPPY=true ) || export CLIPPY=false;
   - export PATH=$PATH:~/.cargo/bin
 
 after_success:
   - |
-      if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then
-        wget https://github.com/SimonKagstrom/kcov/archive/master.tar.gz &&
-        tar xzf master.tar.gz &&
-        cd kcov-master &&
-        mkdir build &&
-        cd build &&
-        cmake .. &&
-        make &&
-        sudo make install &&
-        cd ../.. &&
-        rm -rf kcov-master &&
-        for file in target/debug/examplerust-*[^\.d]; do mkdir -p "target/cov/$(basename $file)"; kcov --exclude-pattern=/.cargo,/usr/lib --verify "target/cov/$(basename $file)" "$file"; done &&
-        bash <(curl -s https://codecov.io/bash) &&
-        echo "Uploaded code coverage"
-      fi
+      wget https://github.com/SimonKagstrom/kcov/archive/master.tar.gz &&
+      tar xzf master.tar.gz &&
+      cd kcov-master &&
+      mkdir build &&
+      cd build &&
+      cmake .. &&
+      make &&
+      sudo make install &&
+      cd ../.. &&
+      rm -rf kcov-master &&
+      for file in target/debug/rocket_csrf-*[^\.d]; do mkdir -p "target/cov/$(basename $file)"; kcov --exclude-pattern=/.cargo,/usr/lib --verify "target/cov/$(basename $file)" "$file"; done &&
+      bash <(curl -s https://codecov.io/bash) &&
+      echo "Uploaded code coverage"

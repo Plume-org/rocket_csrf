@@ -38,18 +38,20 @@ use utils::parse_args;
 /// endpoints and redirecting error to `/csrf-violation` and treat them as if they where `GET`
 /// request then.
 ///
-/// ```rust
-/// #extern crate rocket_csrf
-///
+/// ```rust,no_run
+/// # extern crate rocket;
+/// # extern crate rocket_csrf;
 /// use rocket_csrf::CsrfFairingBuilder;
-/// fn main() {
-///     rocket::ignite()
-///         .attach(rocket_csrf::CsrfFairingBuilder::new()
-///                 .set_default_target("/csrf-violation", rocket::http::Method::Get)
-///                 .finish().unwrap())
+/// # use rocket::Rocket;
+///
+/// # fn main() {
+///     Rocket::ignite()
+///         .attach(CsrfFairingBuilder::new()
+///                 .set_default_target("/csrf-violation".to_owned(), rocket::http::Method::Get)
+///                 .finalize().unwrap())
 ///         //add your routes, other fairings...
 ///         .launch();
-/// }
+/// # }
 /// ```
 
 pub struct CsrfFairingBuilder {
@@ -89,13 +91,17 @@ impl CsrfFairingBuilder {
     ///
     /// # Example
     ///
-    ///  ```rust
+    ///  ```rust,no_run
+    /// # extern crate rocket;
+    /// # extern crate rocket_csrf;
     /// use rocket_csrf::CsrfFairingBuilder;
+    /// # use rocket::Rocket;
+    ///
     /// fn main() {
     ///     rocket::ignite()
     ///         .attach(rocket_csrf::CsrfFairingBuilder::new()
-    ///                 .set_default_target("/csrf-violation", rocket::http::Method::Get)
-    ///                 .finish().unwrap())
+    ///                 .set_default_target("/csrf-violation".to_owned(), rocket::http::Method::Get)
+    ///                 .finalize().unwrap())
     ///         //add your routes, other fairings...
     ///         .launch();
     /// }
@@ -117,16 +123,20 @@ impl CsrfFairingBuilder {
     ///
     /// # Example
     ///
-    ///  ```rust
+    ///  ```rust,no_run
+    /// # extern crate rocket;
+    /// # extern crate rocket_csrf;
     /// use rocket_csrf::CsrfFairingBuilder;
+    /// # use rocket::Rocket;
+    ///
     /// fn main() {
     ///     rocket::ignite()
     ///         .attach(rocket_csrf::CsrfFairingBuilder::new()
     ///                 .set_exceptions(vec![
-    ///                     ("/some/path".to_owned(), "/some/path".to_owned(), rocket::http::Method::Post))//don't verify csrf token
-    ///                     ("/some/<other>/path".to_owned(), "/csrf-error?where=<other>".to_owned(), rocket::http::Method::Get))
+    ///                     ("/some/path".to_owned(), "/some/path".to_owned(), rocket::http::Method::Post),//don't verify csrf token
+    ///                     ("/some/<other>/path".to_owned(), "/csrf-error?where=<other>".to_owned(), rocket::http::Method::Get)
     ///                 ])
-    ///                 .finish().unwrap())
+    ///                 .finalize().unwrap())
     ///         //add your routes, other fairings...
     ///         .launch();
     /// }
@@ -152,13 +162,17 @@ impl CsrfFairingBuilder {
     ///
     /// # Example
     ///
-    ///  ```rust
+    ///  ```rust,no_run
+    /// # extern crate rocket;
+    /// # extern crate rocket_csrf;
     /// use rocket_csrf::CsrfFairingBuilder;
+    /// # use rocket::Rocket;
+    ///
     /// fn main() {
     ///     rocket::ignite()
     ///         .attach(rocket_csrf::CsrfFairingBuilder::new()
     ///                 .set_secret([0;32])//don't do this, use trully secret array instead
-    ///                 .finish().unwrap())
+    ///                 .finalize().unwrap())
     ///         //add your routes, other fairings...
     ///         .launch();
     /// }
