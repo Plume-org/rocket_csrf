@@ -434,6 +434,7 @@ impl Fairing for CsrfFairing {
     }
 }
 
+#[derive(Debug)]
 enum ParseState {
     Reset,                          //default state
     PartialFormMatch(u8),           //when parsing "<form"
@@ -495,7 +496,7 @@ impl<'a> Read for CsrfProxy<'a> {
             if vec.len() - pos <= size {
                 //if the part left of the buffer is smaller than buf
                 buf[0..vec.len() - pos].copy_from_slice(&vec[pos..]);
-                vec.len()
+                vec.len() - pos
             } else {
                 //else if the part left of the buffer is bigger than buf
                 buf.copy_from_slice(&vec[pos..pos + size]);
@@ -558,7 +559,7 @@ impl<'a> Read for CsrfProxy<'a> {
                     ('m', 4) | ('M', 4) => {
                         //if we match end of form, save "</form>" and anything after to a buffer, and insert our token
                         self.insert_tag = Some(0);
-                        self.buf.push((buf[pos..].to_vec(), 0));
+                        self.buf.push((buf[pos..len].to_vec(), 0));
                         self.state = Reset;
                         return Ok(pos);
                     }
@@ -570,7 +571,7 @@ impl<'a> Read for CsrfProxy<'a> {
                     '>' => {
                         //end of this <input> tag, it's not Rocket special one, so insert before, saving what comes next to buffer
                         self.insert_tag = Some(0);
-                        self.buf.push((buf[pos..].to_vec(), 0));
+                        self.buf.push((buf[pos..len].to_vec(), 0));
                         self.state = Reset;
                         return Ok(pos);
                     }
@@ -584,20 +585,20 @@ impl<'a> Read for CsrfProxy<'a> {
                     ('e', 3) | ('E', 3) => PartialNameMatch(4, pos),
                     ('=', 4) => PartialNameMatch(5, pos),
                     ('"', 5) | ('\'', 5) => PartialNameMatch(6, pos),
-                    ('_', 6) => PartialNameMatch(7, pos),
+                    ('_', 6) | ('_', 5) => PartialNameMatch(7, pos),
                     ('m', 7) | ('M', 7) => PartialNameMatch(8, pos),
                     ('e', 8) | ('E', 8) => PartialNameMatch(9, pos),
                     ('t', 9) | ('T', 9) => PartialNameMatch(10, pos),
                     ('h', 10) | ('H', 10) => PartialNameMatch(11, pos),
                     ('o', 11) | ('O', 11) => PartialNameMatch(12, pos),
                     ('d', 12) | ('D', 12) => PartialNameMatch(13, pos),
-                    ('"', 13) => CloseInputTag, //we matched, wait for end of this <input> and insert just after
+                    ('"', 13) | ('\'', 13) | (' ', 13) => CloseInputTag, //we matched, wait for end of this <input> and insert just after
                     _ => SearchMethod(pos),     //we did not match, search next param
                 },
                 CloseInputTag => if buf[i] as char == '>' {
                     //search for '>' at the end of an "<input name='_method'>", and insert token after
                     self.insert_tag = Some(0);
-                    self.buf.push((buf[i + 1..].to_vec(), 0));
+                    self.buf.push((buf[i + 1..len].to_vec(), 0));
                     self.state = Reset;
                     return Ok(i + 1);
                 } else {
