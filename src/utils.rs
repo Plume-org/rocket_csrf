@@ -12,3 +12,32 @@ fn parse_keyvalue(kv: &str) -> Option<(&str, &str)> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use utils::{parse_keyvalue, parse_args};
+    #[test]
+    fn test_parse_keyvalue() {
+        assert_eq!(parse_keyvalue("a_key=a_value").unwrap(),("a_key", "a_value"));
+
+        assert_eq!(parse_keyvalue("=a_value").unwrap(),("", "a_value"));
+
+        assert_eq!(parse_keyvalue("a_key=").unwrap(),("a_key", ""));
+
+        assert_eq!(parse_keyvalue("a_key=a=value").unwrap(),("a_key", "a=value"));
+
+        assert_eq!(parse_keyvalue("=").unwrap(),("", ""));
+
+        assert!(parse_keyvalue("a_key_a_value").is_none());
+
+        assert!(parse_keyvalue("").is_none());
+    }
+    #[test]
+    fn test_parse_args() {
+        let mut it = parse_args("key1=value1&key2&=&&key3=");
+        assert_eq!(it.next().unwrap(), ("key1", "value1"));
+        assert_eq!(it.next().unwrap(), ("", ""));
+        assert_eq!(it.next().unwrap(), ("key3", ""));
+        assert!(it.next().is_none());
+    }
+}
