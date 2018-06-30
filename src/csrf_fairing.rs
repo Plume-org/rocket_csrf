@@ -4,7 +4,7 @@ use data_encoding::{BASE64, BASE64URL_NOPAD};
 use rand::prelude::thread_rng;
 use rand::Rng;
 use rocket::fairing::{Fairing, Info, Kind};
-use rocket::http::uri::Uri;
+use rocket::http::uri::URI as Uri;
 use rocket::http::Method::{self, *};
 use rocket::outcome::Outcome;
 use rocket::response::Body::Sized;
