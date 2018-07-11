@@ -24,14 +24,8 @@ addons:
 script:
   - cargo build
   - cargo test
-  - |
-      if [[ $CLIPPY ]]; then
-        cargo clippy
-      fi
 
 before_script:
-  - |
-        ( cargo install clippy && export CLIPPY=true ) || export CLIPPY=false;
   - export PATH=$PATH:~/.cargo/bin
 
 after_success:
