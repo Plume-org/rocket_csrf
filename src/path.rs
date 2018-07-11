@@ -17,22 +17,28 @@ impl Path {
         } else {
             (path, None)
         };
-        Path {
-            path: path
+        let path: Vec<_> = path
                 .split('/')//split path at each '/'
                 .filter(|seg| seg != &"")//remove empty segments
                 .map(|seg| {
-                    if seg.get(..1) == Some("<") && seg.get(seg.len() - 1..) == Some(">") {//if the segment start with '<' and end with '>', it is dynamic
+                    if seg.starts_with('<') && seg.ends_with("..>")  {
+                        PathPart::MultiDynamic(seg[1..seg.len() - 3].to_owned())
+                    } else if seg.starts_with('<') && seg.ends_with('>') {
                         PathPart::Dynamic(seg[1..seg.len() - 1].to_owned())
                     } else {//else it's static
                         PathPart::Static(seg.to_owned())
-                    }//TODO add support for <..path> to match more than one segment
+                    }
                 })
-                .collect(),
-            param: query.map(|query| {
-                parse_args(query)
-                    .map(|(k, v)| {
-                        (
+                .collect();
+        if path[0..path.len()-1].iter().any(|a|
+                                             if let PathPart::MultiDynamic(_) = a {true} else {false}
+                                             ) {
+            panic!("invalid path provided"); //TODO return error instead of panic
+        }
+
+        let param =  query.map(|query| {
+            parse_args(query)
+                .map(|(k, v)| {(
                             k.to_owned(),
                             if v.get(..1) == Some("<") && v.get(v.len() - 1..) == Some(">") {
                                 //do the same kind of parsing as above, but on query params
@@ -42,14 +48,17 @@ impl Path {
                             },
                         )
                     })
-                    .collect()
-            }),
+            .collect()
+        });
+        Path {
+            path,
+            param,
         }
     }
 
-    pub fn extract<'a>(&self, uri: &'a str) -> Option<HashMap<&str, &'a str>> {
+    pub fn extract<'a>(&self, uri: &'a str) -> Option<HashMap<&str, String>> {
         //try to match a str against a path, give back a hashmap of correponding parts if it matched
-        let mut res: HashMap<&str, &'a str> = HashMap::new();
+        let mut res: HashMap<&str, String> = HashMap::new();
         let (path, query) = if let Some(pos) = uri.find('?') {
             let (path, query) = uri.split_at(pos);
             let query = &query[1..];
@@ -60,25 +69,35 @@ impl Path {
         let mut path = path.split('/').filter(|seg| seg != &"");
         let mut reference = self.path.iter();
         loop {
-            match path.next() {
-                Some(v) => {
-                    if let Some(reference) = reference.next() {
+            match reference.next() {
+                Some(reference) => {
                         match reference {
-                            PathPart::Static(refe) => if refe != v {
+                            PathPart::Static(reference) => {
                                 //static, but not the same, fail to parse
-                                return None;
+                                if let Some(val) = path.next() {
+                                    if val!=reference{
+                                        return None
+                                    }
+                                } else {
+                                    return None
+                                }
                             },
                             PathPart::Dynamic(key) => {
                                 //dynamic, store to hashmap
-                                res.insert(key, v);
+                                if let Some(val) = path.next() {
+                                    res.insert(key, val.to_owned());
+                                } else {
+                                    return None
+                                }
+                            }
+                            PathPart::MultiDynamic(key) => {
+                                let val = path.collect::<Vec<_>>().join("/");
+                                res.insert(key, val);
+                                break;
                             }
                         };
-                    } else {
-                        //not the same lenght, fail to parse
-                        return None;
                     }
-                }
-                None => if reference.next().is_some() {
+                None => if path.next().is_some() {
                     //not the same lenght, fail to parse
                     return None;
                 } else {
@@ -97,8 +116,9 @@ impl Path {
                         },
                         PathPart::Dynamic(key) => {
                             //dynamic, store to hashmap
-                            res.insert(key, hm.get::<str>(k)?);
+                            res.insert(key, hm.get::<&str>(&(k as &str))?.to_string());
                         }
+                        PathPart::MultiDynamic(_) => panic!("PathPart::MultiDynamic is invalid in query part"),
                     }
                 }
             } else {
@@ -113,7 +133,7 @@ impl Path {
         Some(res)
     }
 
-    pub fn map(&self, param: &HashMap<&str, &str>) -> Option<String> {
+    pub fn map(&self, param: &HashMap<&str, String>) -> Option<String> {
         //Generate a path from a reference and a hashmap
         let mut res = String::new();
         for seg in &self.path {
@@ -121,7 +141,7 @@ impl Path {
             res.push('/');
             match seg {
                 PathPart::Static(val) => res.push_str(val),
-                PathPart::Dynamic(val) => res.push_str(param.get::<str>(val)?),
+                PathPart::Dynamic(val) | PathPart::MultiDynamic(val) => res.push_str(param.get::<str>(val)?),
             }
         }
         if let Some(ref keymap) = self.param {
@@ -133,6 +153,7 @@ impl Path {
                 match v {
                     PathPart::Static(val) => res.push_str(val),
                     PathPart::Dynamic(val) => res.push_str(param.get::<str>(val)?),
+                    PathPart::MultiDynamic(_) => panic!("PathPart::MultiDynamic is invalid in query part"),
                 }
                 res.push('&');
             }
@@ -145,6 +166,7 @@ impl Path {
 enum PathPart {
     Static(String),
     Dynamic(String),
+    MultiDynamic(String),
 }
 
 #[cfg(test)]
@@ -165,7 +187,7 @@ mod tests{
         assert_eq!(no_query.map(&HashMap::new()).unwrap(), "/path/no_query");
 
         let mut hashmap = HashMap::new();
-        hashmap.insert("key","value");
+        hashmap.insert("key","value".to_owned());
         assert_eq!(no_query.map(&hashmap).unwrap(), "/path/no_query");
     }
     
@@ -188,8 +210,59 @@ mod tests{
 
 
         let mut hashmap = HashMap::new();
-        hashmap.insert("key","value");
+        hashmap.insert("key","value".to_owned());
         let uri = query.map(&hashmap).unwrap();
         assert!(uri=="/path/query?param=value&param2=value2" || uri=="/path/query?param2=value2&param=value");
+    }
+
+    #[test]
+    fn test_dynamic_path_without_query() {
+        let no_query = Path::from("/path/<with>/<dynamic>/values");
+        assert!(no_query.extract("/path/with/dynamic/values/longer").is_none());
+        assert!(no_query.extract("/path/with/dynamic").is_none());
+        assert!(no_query.extract("/path/with/dynamic/non_value").is_none());
+        assert!(no_query.extract("/path/with/dynamic/values?and=query").is_none());
+
+        let hashmap = no_query.extract("/path/containing/moving/values").unwrap();
+        assert_eq!(hashmap.len(), 2);
+        assert_eq!(hashmap.get("with").unwrap(), "containing");
+        assert_eq!(hashmap.get("dynamic").unwrap(), "moving");
+
+        assert!(no_query.map(&HashMap::new()).is_none());
+
+        let mut hashmap = HashMap::new();
+        hashmap.insert("with","with".to_owned());
+        hashmap.insert("dynamic","non_static".to_owned());
+        assert_eq!(no_query.map(&hashmap).unwrap(), "/path/with/non_static/values");
+        hashmap.insert("random","value".to_owned());
+        assert_eq!(no_query.map(&hashmap).unwrap(), "/path/with/non_static/values");
+    }
+
+    #[test]
+    fn test_dynamic_path_with_query() {
+        let query = Path::from("/path/<with>/<dynamic>/values?key=<value>&static=static");
+        assert!(query.extract("/path/with/dynamic/values?key=something&static=error").is_none());
+
+        let hashmap = query.extract("/path/containing/moving/values?key=val&static=static").unwrap();
+        assert_eq!(hashmap.len(), 3);
+        assert_eq!(hashmap.get("with").unwrap(), "containing");
+        assert_eq!(hashmap.get("dynamic").unwrap(), "moving");
+        assert_eq!(hashmap.get("value").unwrap(), "val");
+
+        let hashmap = query.extract("/path/containing/moving/values?static=static&key=val").unwrap();
+        assert_eq!(hashmap.len(), 3);
+        assert_eq!(hashmap.get("with").unwrap(), "containing");
+        assert_eq!(hashmap.get("dynamic").unwrap(), "moving");
+        assert_eq!(hashmap.get("value").unwrap(), "val");
+
+        assert!(query.map(&HashMap::new()).is_none());
+
+        let mut hashmap = HashMap::new();
+        hashmap.insert("with","with".to_owned());
+        hashmap.insert("dynamic","non_static".to_owned());
+        hashmap.insert("value", "something".to_owned());
+        assert!(query.map(&hashmap).unwrap()=="/path/with/non_static/values?key=something&static=static" || query.map(&hashmap).unwrap()=="/path/with/non_static/values?static=static&key=something");
+        hashmap.insert("random","value".to_owned());
+        assert!(query.map(&hashmap).unwrap()=="/path/with/non_static/values?key=something&static=static" || query.map(&hashmap).unwrap()=="/path/with/non_static/values?static=static&key=something");
     }
 }

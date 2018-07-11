@@ -236,7 +236,7 @@ impl CsrfFairingBuilder {
 
         let default_target = Path::from(&self.default_target.0);
         let mut hashmap = HashMap::new();
-        hashmap.insert("uri", "");
+        hashmap.insert("uri", "".to_owned());
         if default_target.map(&hashmap).is_none() {
             return Err(());
         } //verify if this path is valid as default path, i.e. it have at most one dynamic part which is <uri>
@@ -350,8 +350,8 @@ impl Fairing for CsrfFairing {
 
         let uri = request.uri().to_string();
         let uri = Uri::percent_encode(&uri);
-        let mut param: HashMap<&str, &str> = HashMap::new();
-        param.insert("uri", &uri);
+        let mut param: HashMap<&str, String> = HashMap::new();
+        param.insert("uri", uri.to_string());
         request.set_uri(self.default_target.0.map(&param).unwrap());
         request.set_method(self.default_target.1)
     }
