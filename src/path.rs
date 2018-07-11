@@ -33,14 +33,16 @@ impl Path {
         if path[0..path.len()-1].iter().any(|a|
                                              if let PathPart::MultiDynamic(_) = a {true} else {false}
                                              ) {
-            panic!("invalid path provided"); //TODO return error instead of panic
+            panic!("PathPart::MultiDynamic can only be found at end of path"); //TODO return error instead of panic
         }
 
         let param =  query.map(|query| {
             parse_args(query)
                 .map(|(k, v)| {(
                             k.to_owned(),
-                            if v.get(..1) == Some("<") && v.get(v.len() - 1..) == Some(">") {
+                            if v.starts_with('<') && v.ends_with("..>")  {
+                               panic!("PathPart::MultiDynamic is invalid in query part"); 
+                            } else if v.starts_with('<') && v.ends_with('>') {
                                 //do the same kind of parsing as above, but on query params
                                 PathPart::Dynamic(v[1..v.len() - 1].to_owned())
                             } else {
@@ -264,5 +266,34 @@ mod tests{
         assert!(query.map(&hashmap).unwrap()=="/path/with/non_static/values?key=something&static=static" || query.map(&hashmap).unwrap()=="/path/with/non_static/values?static=static&key=something");
         hashmap.insert("random","value".to_owned());
         assert!(query.map(&hashmap).unwrap()=="/path/with/non_static/values?key=something&static=static" || query.map(&hashmap).unwrap()=="/path/with/non_static/values?static=static&key=something");
+    }
+
+    #[test]
+    #[should_panic(expected = "PathPart::MultiDynamic is invalid in query part")]
+    fn test_mutlidynamic_in_query() {
+        Path::from("/path?query=<dynamic..>");
+    }
+
+    #[test]
+    #[should_panic(expected = "PathPart::MultiDynamic can only be found at end of path")]
+    fn test_multidynamic_before_end_of_path() {
+        Path::from("/<dynamic..>/something");
+    }
+
+    #[test]
+    fn test_multidynamic() {
+        let query = Path::from("/path/<multidyn..>?static=static");
+        
+        let hashmap = query.extract("/path?static=static").unwrap();
+        assert_eq!(hashmap.len(), 1);
+        assert_eq!(hashmap.get("multidyn").unwrap(), "");
+        
+        let hashmap = query.extract("/path/longer/than/before?static=static").unwrap();
+        assert_eq!(hashmap.len(), 1);
+        assert_eq!(hashmap.get("multidyn").unwrap(), "longer/than/before");
+        
+        let mut hashmap = HashMap::new();
+        hashmap.insert("multidyn","something".to_owned());
+        assert_eq!(query.map(&hashmap).unwrap(), "/path/something?static=static");
     }
 }
