@@ -5,6 +5,7 @@ use rocket::http::{Cookie, Status};
 use rocket::outcome::Outcome;
 use rocket::request::{self, FromRequest};
 use serde::{Serialize, Serializer};
+use time::Duration;
 
 /// Csrf token to insert into pages.
 ///
@@ -62,7 +63,9 @@ impl<'a, 'r> FromRequest<'a, 'r> for CsrfToken {
         match csrf_engine.generate_token_pair(token_value.as_ref(), *duration) {
             Ok((token, cookie)) => {
                 let mut c = Cookie::new(CSRF_COOKIE_NAME, cookie.b64_string());
-                cookies.add(c); //TODO add a timeout, same_site, http_only and secure to the cookie
+                c.set_http_only(true);
+                c.set_max_age(Duration::seconds(*duration));
+                cookies.add(c); //TODO add a same_site and secure to the cookie
                 Outcome::Success(CsrfToken {
                     value: BASE64URL_NOPAD.encode(token.value()),
                 })

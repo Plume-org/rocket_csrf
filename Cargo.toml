@@ -13,6 +13,7 @@ csrf = "~0.3.0"
 data-encoding = "~2.1.1"
 rand = "~0.5.2"
 serde = "~1.0"
+time = "~0.1.40"
 
 [dependencies.rocket]
 git = "https://github.com/SergioBenitez/Rocket"

@@ -46,6 +46,7 @@ extern crate data_encoding;
 extern crate rand;
 extern crate rocket;
 extern crate serde;
+extern crate time;
 
 mod csrf_proxy;
 mod csrf_fairing;

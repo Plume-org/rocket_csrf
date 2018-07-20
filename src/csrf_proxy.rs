@@ -1,27 +1,82 @@
 use std::io::{Read, Error};
 use std::cmp;
+use std::collections::VecDeque;
 use super::CsrfToken;
 use csrf_proxy::ParseState::*;
 
+
 #[derive(Debug)]
-enum ParseState {
-    Reset,                          //default state
-    PartialFormMatch(u8),           //when parsing "<form"
-    SearchInput,                    //like default state, but inside a form
-    PartialInputMatch(u8, usize),   //when parsing "<input"
-    PartialFormEndMatch(u8, usize), //when parsing "</form" ('<' is actally done via PartialInputMarch)
-    SearchMethod(usize),            //when inside the first <input>, search for begining of a param
-    PartialNameMatch(u8, usize),    //when parsing "name="_method""
-    CloseInputTag, //only if insert after, search for '>' of a "<input name=\"_method\">"
+struct Buffer {
+    buf: VecDeque<Vec<u8>>,
+    pos: VecDeque<usize>,
 }
 
+impl Buffer {
+    fn new() -> Self {
+        Buffer {
+            buf: VecDeque::new(),
+            pos: VecDeque::new(),
+        }
+    }
+
+    fn push_back(&mut self, value: Vec<u8>) {
+        self.buf.push_back(value);
+        self.pos.push_back(0);
+    }
+
+    fn read(&mut self, buf: &mut [u8]) -> usize {
+        let mut read = 0;
+        while buf.len() > read && !self.is_empty() {
+            let part_len = self.buf[0].len() - self.pos[0];
+            let buf_len = buf.len() - read;
+            let to_copy = cmp::min(part_len, buf_len);
+            buf[read..read + to_copy]
+                .copy_from_slice(&self.buf[0][self.pos[0]..self.pos[0]+to_copy]);
+            read += to_copy;
+            if part_len == to_copy {
+                self.buf.pop_front();
+                self.pos.pop_front();
+            } else {
+                self.pos[0]+=to_copy;
+            }
+        }
+        read
+    }
+
+    fn len(&self) -> usize {
+        self.buf.iter().fold(0, |size, buf| size+buf.len()) - self.pos.iter().fold(0, |size, pos| size + pos)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+}
+
+impl Default for Buffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+
+#[derive(Debug)]
+enum ParseState {
+    Init,                           //default state
+    PartialFormMatch,               //when parsing "<form"
+    SearchFormElem,                 //like default state, but inside a form
+    PartialFormElemMatch,           //when parsing "<input"
+    SearchMethod(usize),            //when inside the first <input>, search for begining of a param
+    PartialNameMatch(usize),        //when parsing "name="_method""
+    CloseInputTag,                  //only if insert after, search for '>' of a "<input name=\"_method\">"
+}
 
 pub struct CsrfProxy<'a> {
     underlying: Box<Read + 'a>, //the underlying Reader from which we get data
     token: Vec<u8>,             //a full input tag loaded with a valid token
-    buf: Vec<(Vec<u8>, usize)>, //a stack of buffers, with a position in case a buffer was not fully transmited
+    buf: Buffer,
+    unparsed: Vec<u8>,
     state: ParseState,          //state of the parser
-    insert_tag: Option<usize>, //if we have to insert tag here, and how fare are we in the tag (in case of very short read()s)
+    eof: bool,
 }
 
 impl<'a> CsrfProxy<'a> {
@@ -34,147 +89,152 @@ impl<'a> CsrfProxy<'a> {
         token.extend_from_slice(tag_middle);
         token.extend_from_slice(tag_end);
         CsrfProxy {
-            underlying,
+            underlying: underlying,
             token,
-            buf: Vec::new(),
-            state: ParseState::Reset,
-            insert_tag: None,
+            buf: Buffer::new(),
+            unparsed: Vec::with_capacity(4096),
+            state: ParseState::Init,
+            eof: false,
         }
     }
 }
 
 impl<'a> Read for CsrfProxy<'a> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
-        if let Some(pos) = self.insert_tag {
-            //if we should insert a tag
-            let size = buf.len();
-            let copy_size = cmp::min(size, self.token.len() - pos); //get max copy length
-            buf[0..copy_size].copy_from_slice(&self.token[pos..copy_size + pos]); //copy that mutch
-            if copy_size == self.token.len() - pos {
-                //if we copied the full tag, say we don't need to set it again
-                self.insert_tag = None;
-            } else {
-                //if we didn't copy the full tag, save where we were
-                self.insert_tag = Some(pos + copy_size);
-            }
-            return Ok(copy_size); //return the lenght of the copied data
-        }
+        //println!("request {}", buf.len());
 
-        let len = if let Some((vec, pos)) = self.buf.pop() {
-            //if there is a buffer to add here
-            let size = buf.len();
-            if vec.len() - pos <= size {
-                //if the part left of the buffer is smaller than buf
-                buf[0..vec.len() - pos].copy_from_slice(&vec[pos..]);
-                vec.len() - pos
+        while self.buf.len() < buf.len() && !(self.eof && self.unparsed.is_empty()) {
+            let len = if !self.eof {
+                let unparsed_len = self.unparsed.len();
+                self.unparsed.resize(4096,0);
+                unparsed_len +
+                    match self.underlying.read(&mut self.unparsed[unparsed_len..]) {
+                        Ok(0) => {
+                            self.eof = true;
+                            0
+                        },
+                        Ok(len) => len,
+                        Err(e) => return Err(e),
+                    }
             } else {
-                //else if the part left of the buffer is bigger than buf
-                buf.copy_from_slice(&vec[pos..pos + size]);
-                self.buf.push((vec, pos + size));
-                size
-            } //send the size of what was read as if it was a normal read on underlying struct
-        } else {
-            //if there is no buffer to add, read from underlying struct
-            let res = self.underlying.read(buf);
-            if res.is_err() {
-                return res;
-            }
-            match res {
-                Ok(v) => v,
-                Err(_) => return res,
-            }
-        };
+                self.unparsed.len()
+            };
 
-        for i in 0..len {
-            //for each byte
-            self.state = match self.state {
-                Reset => if buf[i] as char == '<' {
-                    //if we are in default state and we begin to match any tag
-                    PartialFormMatch(0)
-                } else {
-                    //if we don't match a tag
-                    Reset
-                },
-                PartialFormMatch(count) => match (buf[i] as char, count) {
-                    //progressively match "form"
-                    ('f', 0) | ('F', 0) => PartialFormMatch(1),
-                    ('o', 1) | ('O', 1) => PartialFormMatch(2),
-                    ('r', 2) | ('R', 2) => PartialFormMatch(3),
-                    ('m', 3) | ('M', 3) => SearchInput, //when we success, go to next state
-                    _ => Reset, //if this don't match, go back to defailt state
-                },
-                SearchInput => if buf[i] as char == '<' {
-                    //begin to match any tag
-                    PartialInputMatch(0, i)
-                } else {
-                    SearchInput
-                },
-                PartialInputMatch(count, pos) => match (buf[i] as char, count) {
-                    //progressively match "input"
-                    ('i', 0) | ('I', 0) => PartialInputMatch(1, pos),
-                    ('n', 1) | ('N', 1) => PartialInputMatch(2, pos),
-                    ('p', 2) | ('P', 2) => PartialInputMatch(3, pos),
-                    ('u', 3) | ('U', 3) => PartialInputMatch(4, pos),
-                    ('t', 4) | ('T', 4) => SearchMethod(pos), //when we success, go to next state
-                    ('/', 0) => PartialFormEndMatch(1, pos), //if first char is '/', it may mean we are matching end of form, go to that state
-                    _ => SearchInput, //not a input tag, go back to SearchInput
-                },
-                PartialFormEndMatch(count, pos) => match (buf[i] as char, count) {
-                    //progressively match "/form"
-                    ('/', 0) => PartialFormEndMatch(1, pos), //unreachable, here only for comprehension
-                    ('f', 1) | ('F', 1) => PartialFormEndMatch(2, pos),
-                    ('o', 2) | ('O', 2) => PartialFormEndMatch(3, pos),
-                    ('r', 3) | ('R', 3) => PartialFormEndMatch(4, pos),
-                    ('m', 4) | ('M', 4) => {
-                        //if we match end of form, save "</form>" and anything after to a buffer, and insert our token
-                        self.insert_tag = Some(0);
-                        self.buf.push((buf[pos..len].to_vec(), 0));
-                        self.state = Reset;
-                        return Ok(pos);
+            let (consumed, insert_token) = {
+                let mut buf = &self.unparsed[..len];//work only on the initialized part
+                let mut consumed = 0;
+                let mut leave = false;
+                let mut insert_token = false;
+                while !leave {
+                    self.state = match self.state {
+                        Init => {
+                            if let Some(tag_pos) = buf.iter().position(|&c| c as char=='<') {
+                                buf = &buf[tag_pos..];
+                                consumed+=tag_pos;
+                                PartialFormMatch
+                            } else {
+                                leave = true;
+                                consumed += buf.len();
+                                Init
+                            }
+                        },
+                        PartialFormMatch => {
+                            if let Some(lower_begin) = buf.get(1..5).map(|slice| slice.to_ascii_lowercase()) {
+                                buf = &buf[5..];
+                                consumed += 5;
+                                if lower_begin == "form".as_bytes() {
+                                    SearchFormElem
+                                } else {
+                                    Init
+                                }
+                            } else {
+                               leave = true;
+                               PartialFormMatch
+                            }
+                        },
+                        SearchFormElem => {
+                            if let Some(tag_pos) = buf.iter().position(|&c| c as char=='<') {
+                                buf = &buf[tag_pos..];
+                                consumed+=tag_pos;
+                                PartialFormElemMatch
+                            } else {
+                                leave = true;
+                                consumed += buf.len();
+                                SearchFormElem
+                            }},
+                        PartialFormElemMatch => {
+                            if let Some(lower_begin) = buf.get(1..9).map(|slice| slice.to_ascii_lowercase()) {
+                                if lower_begin.starts_with("/form".as_bytes())
+                                    || lower_begin.starts_with("textarea".as_bytes())
+                                    || lower_begin.starts_with("button".as_bytes())
+                                    || lower_begin.starts_with("select".as_bytes()) {
+                                    insert_token = true;
+                                    leave = true;
+                                    Init
+                                } else if lower_begin.starts_with("input".as_bytes()){
+                                    SearchMethod(9)
+                                } else {
+                                    buf = &buf[9..];
+                                    consumed += 9;
+                                    SearchFormElem
+                                }
+                            } else {
+                               leave = true;
+                               PartialFormMatch
+                            }
+                        },
+                        SearchMethod(pos) => {
+                            if let Some(meth_pos) = buf[pos..].iter().position(|&c| c as char == ' ' || c as char == '>') {
+                                if buf[meth_pos + pos] as char == ' ' {
+                                    PartialNameMatch(meth_pos + pos + 1)
+                                } else { //reached '>'
+                                    insert_token = true;
+                                    leave = true;
+                                    Init
+                                }
+                            } else {
+                                leave = true;
+                                SearchMethod(buf.len())
+                            }
+                        },
+                        PartialNameMatch(pos) => {
+                            if let Some(lower_begin) = buf.get(pos..pos+14).map(|slice| slice.to_ascii_lowercase()) {
+                                if lower_begin.starts_with("name=\"_method\"".as_bytes())
+                                    || lower_begin.starts_with("name='_method'".as_bytes())
+                                    || lower_begin.starts_with("name=_method".as_bytes()) {
+                                    buf = &buf[pos+14..];
+                                    consumed += pos+14;
+                                    CloseInputTag
+                                } else {
+                                    SearchMethod(pos)
+                                }
+                            } else {
+                               leave = true;
+                               PartialNameMatch(pos)
+                            }
+                        },
+                        CloseInputTag => {
+                            leave = true;
+                            if let Some(tag_pos) = buf.iter().position(|&c| c as char=='>') {
+                                buf = &buf[tag_pos..];
+                                consumed+=tag_pos;
+                                insert_token = true;
+                                Init
+                            } else {
+                                consumed += buf.len();
+                                CloseInputTag
+                            }
+                        },
                     }
-                    _ => SearchInput,
-                },
-                SearchMethod(pos) => match buf[i] as char {
-                    //try to match params
-                    ' ' => PartialNameMatch(0, pos), //space, next char is a new param
-                    '>' => {
-                        //end of this <input> tag, it's not Rocket special one, so insert before, saving what comes next to buffer
-                        self.insert_tag = Some(0);
-                        self.buf.push((buf[pos..len].to_vec(), 0));
-                        self.state = Reset;
-                        return Ok(pos);
-                    }
-                    _ => SearchMethod(pos),
-                },
-                PartialNameMatch(count, pos) => match (buf[i] as char, count) {
-                    //progressively match "name='_method'", which must be first to work
-                    ('n', 0) | ('N', 0) => PartialNameMatch(1, pos),
-                    ('a', 1) | ('A', 1) => PartialNameMatch(2, pos),
-                    ('m', 2) | ('M', 2) => PartialNameMatch(3, pos),
-                    ('e', 3) | ('E', 3) => PartialNameMatch(4, pos),
-                    ('=', 4) => PartialNameMatch(5, pos),
-                    ('"', 5) | ('\'', 5) => PartialNameMatch(6, pos),
-                    ('_', 6) | ('_', 5) => PartialNameMatch(7, pos),
-                    ('m', 7) | ('M', 7) => PartialNameMatch(8, pos),
-                    ('e', 8) | ('E', 8) => PartialNameMatch(9, pos),
-                    ('t', 9) | ('T', 9) => PartialNameMatch(10, pos),
-                    ('h', 10) | ('H', 10) => PartialNameMatch(11, pos),
-                    ('o', 11) | ('O', 11) => PartialNameMatch(12, pos),
-                    ('d', 12) | ('D', 12) => PartialNameMatch(13, pos),
-                    ('"', 13) | ('\'', 13) | (' ', 13) => CloseInputTag, //we matched, wait for end of this <input> and insert just after
-                    _ => SearchMethod(pos),     //we did not match, search next param
-                },
-                CloseInputTag => if buf[i] as char == '>' {
-                    //search for '>' at the end of an "<input name='_method'>", and insert token after
-                    self.insert_tag = Some(0);
-                    self.buf.push((buf[i + 1..len].to_vec(), 0));
-                    self.state = Reset;
-                    return Ok(i + 1);
-                } else {
-                    CloseInputTag
-                },
+                }
+                (consumed, insert_token)
+            };
+            self.buf.push_back(self.unparsed[0..consumed].to_vec());
+            if insert_token {
+                self.buf.push_back(self.token.clone());
             }
+            self.unparsed.drain(0..consumed);
         }
-        Ok(len)
+        Ok(self.buf.read(buf))
     }
 }

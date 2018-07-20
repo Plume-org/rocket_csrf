@@ -326,6 +326,7 @@ impl Fairing for CsrfFairing {
             .filter_map(|token| csrf_engine.parse_token(&token).ok())
             .next(); //get and parse Csrf token
 
+
         if let Some(token) = token {
             if let Some(cookie) = cookie {
                 if csrf_engine.verify_token_pair(&token, &cookie) {
@@ -367,8 +368,7 @@ impl Fairing for CsrfFairing {
         if self
             .auto_insert_disable_prefix
             .iter()
-            .any(|prefix| uri.starts_with(prefix))
-        {
+            .any(|prefix| uri.starts_with(prefix)) {
             return;
         } //if request is on an ignored prefix, ignore it
 
