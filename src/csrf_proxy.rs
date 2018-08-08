@@ -1,7 +1,6 @@
 use std::io::{Read, Error};
 use std::cmp;
 use std::collections::VecDeque;
-use super::CsrfToken;
 use csrf_proxy::ParseState::*;
 
 
@@ -80,16 +79,16 @@ pub struct CsrfProxy<'a> {
 }
 
 impl<'a> CsrfProxy<'a> {
-    pub fn from(underlying: Box<Read + 'a>, token: &CsrfToken) -> Self {
+    pub fn from(underlying: Box<Read + 'a>, token: &[u8]) -> Self {
         let tag_begin = b"<input type=\"hidden\" name=\"csrf-token\" value=\"";
-        let tag_middle = token.value();
-        let tag_end = b"\">";
+        let tag_middle = token;
+        let tag_end = b"\"/>";
         let mut token = Vec::new();
         token.extend_from_slice(tag_begin);
         token.extend_from_slice(tag_middle);
         token.extend_from_slice(tag_end);
         CsrfProxy {
-            underlying: underlying,
+            underlying,
             token,
             buf: Buffer::new(),
             unparsed: Vec::with_capacity(4096),
@@ -101,7 +100,6 @@ impl<'a> CsrfProxy<'a> {
 
 impl<'a> Read for CsrfProxy<'a> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
-        //println!("request {}", buf.len());
 
         while self.buf.len() < buf.len() && !(self.eof && self.unparsed.is_empty()) {
             let len = if !self.eof {
@@ -119,6 +117,8 @@ impl<'a> Read for CsrfProxy<'a> {
             } else {
                 self.unparsed.len()
             };
+
+            self.unparsed.resize(len, 0);//we growed unparsed buffer to 4k before, so shrink it to it's neaded size
 
             let (consumed, insert_token) = {
                 let mut buf = &self.unparsed[..len];//work only on the initialized part
@@ -172,7 +172,7 @@ impl<'a> Read for CsrfProxy<'a> {
                                     leave = true;
                                     Init
                                 } else if lower_begin.starts_with("input".as_bytes()){
-                                    SearchMethod(9)
+                                    SearchMethod(6)
                                 } else {
                                     buf = &buf[9..];
                                     consumed += 9;
@@ -200,10 +200,13 @@ impl<'a> Read for CsrfProxy<'a> {
                         PartialNameMatch(pos) => {
                             if let Some(lower_begin) = buf.get(pos..pos+14).map(|slice| slice.to_ascii_lowercase()) {
                                 if lower_begin.starts_with("name=\"_method\"".as_bytes())
-                                    || lower_begin.starts_with("name='_method'".as_bytes())
-                                    || lower_begin.starts_with("name=_method".as_bytes()) {
+                                    || lower_begin.starts_with("name='_method'".as_bytes()) {
                                     buf = &buf[pos+14..];
                                     consumed += pos+14;
+                                    CloseInputTag
+                                } else if lower_begin.starts_with("name=_method".as_bytes()) {
+                                    buf = &buf[pos+12..];
+                                    consumed += pos+12;
                                     CloseInputTag
                                 } else {
                                     SearchMethod(pos)
@@ -216,8 +219,8 @@ impl<'a> Read for CsrfProxy<'a> {
                         CloseInputTag => {
                             leave = true;
                             if let Some(tag_pos) = buf.iter().position(|&c| c as char=='>') {
-                                buf = &buf[tag_pos..];
-                                consumed+=tag_pos;
+                                buf = &buf[tag_pos+1..];
+                                consumed+=tag_pos+1;
                                 insert_token = true;
                                 Init
                             } else {
@@ -236,5 +239,174 @@ impl<'a> Read for CsrfProxy<'a> {
             self.unparsed.drain(0..consumed);
         }
         Ok(self.buf.read(buf))
+    }
+}
+
+#[cfg(test)]
+mod tests{
+    use csrf_proxy::{Buffer, CsrfProxy};
+    use std::io::{Cursor,Read};
+
+    #[test]
+    fn test_buffer_size() {
+        let mut buffer = Buffer::new();
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.len(), 0);
+
+        buffer.push_back(vec![0; 64]);
+        assert!(!buffer.is_empty());
+        assert_eq!(buffer.len(), 64);
+        let mut buf = [0; 32];
+        buffer.read(&mut buf);
+        assert!(!buffer.is_empty());
+        assert_eq!(buffer.len(), 32);
+        buffer.read(&mut buf);
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.len(), 0);
+    }
+
+    #[test]
+    fn test_buffer_integrity() {
+        let mut buffer = Buffer::new();
+        let mut buf = [0; 8];
+
+        buffer.push_back(vec![0,1,2,3,4,5,6,7,8,9]);
+        buffer.push_back(vec![10,11,12,13,14,15,16,17,18,19]);
+
+        let size = buffer.read(&mut buf);
+        assert_eq!(size, 8);
+        assert_eq!(buf,[0,1,2,3,4,5,6,7]);
+
+        buffer.push_back(vec![20,21,22,23,24,25,26,27,28,29]);
+
+        let size = buffer.read(&mut buf);
+        assert_eq!(size, 8);
+        assert_eq!(buf,[8,9,10,11,12,13,14,15]);
+
+        let size = buffer.read(&mut buf);
+        assert_eq!(size, 8);
+        assert_eq!(buf,[16,17,18,19,20,21,22,23]);
+
+        let size = buffer.read(&mut buf);
+        assert_eq!(size, 6);
+        assert_eq!(buf[..6], [24,25,26,27,28,29]);
+
+        let size = buffer.read(&mut buf);
+        assert_eq!(size, 0);
+    }
+
+    #[test]
+    fn test_proxy_identity() {
+        let data = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+    Body of this simple doc
+  </body>
+</html>".as_bytes();
+        let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+        let mut pr_data = Vec::new();
+        let read = proxy.read_to_end(&mut pr_data);
+        assert_eq!(read.unwrap(), data.len());
+        assert_eq!(&pr_data,&data)
+    }
+
+    #[test]
+    fn test_token_insertion_empty_form() {
+        let data = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <p>
+          some text
+        </p>
+     </form>
+  </body>
+</html>".as_bytes();
+    let expected = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <p>
+          some text
+        </p>
+     <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/></form>
+  </body>
+</html>".as_bytes();
+        let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+        let mut pr_data = Vec::new();
+        let read = proxy.read_to_end(&mut pr_data);
+        assert_eq!(read.unwrap(), data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len());
+        assert_eq!(&pr_data,&expected)
+    }
+
+    #[test]
+    fn test_token_insertion() {
+        let data = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <input name=\"name\"/>
+     </form>
+  </body>
+</html>".as_bytes();
+    let expected = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/><input name=\"name\"/>
+     </form>
+  </body>
+</html>".as_bytes();
+        let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+        let mut pr_data = Vec::new();
+        let read = proxy.read_to_end(&mut pr_data);
+        assert_eq!(read.unwrap(), data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len());
+        assert_eq!(&pr_data,&expected)
+    }
+
+    #[test]
+    fn test_token_insertion_with_method() {
+        let data = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <input name=\"_method\"/>
+     </form>
+  </body>
+</html>".as_bytes();
+    let expected = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <input name=\"_method\"/><input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>
+     </form>
+  </body>
+</html>".as_bytes();
+        let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+        let mut pr_data = Vec::new();
+        let read = proxy.read_to_end(&mut pr_data);
+        assert_eq!(read.unwrap(), data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len());
+        assert_eq!(&pr_data,&expected)
     }
 }

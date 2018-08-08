@@ -387,19 +387,19 @@ impl Fairing for CsrfFairing {
             if len <= self.auto_insert_max_size {
                 //if this is a small enought body, process the full body
                 let mut res = Vec::with_capacity(len as usize);
-                CsrfProxy::from(body_reader, &token)
+                CsrfProxy::from(body_reader, &token.value())
                     .read_to_end(&mut res)
                     .unwrap();
                 response.set_sized_body(Cursor::new(res));
             } else {
                 //if body is of known but long size, change it to a stream to preserve memory, by encapsulating it into our "proxy" struct
                 let body = body_reader;
-                response.set_streamed_body(Box::new(CsrfProxy::from(body, &token)));
+                response.set_streamed_body(Box::new(CsrfProxy::from(body, &token.value())));
             }
         } else {
             //if body is of unknown size, encapsulate it into our "proxy" struct
             let body = body.into_inner();
-            response.set_streamed_body(Box::new(CsrfProxy::from(body, &token)));
+            response.set_streamed_body(Box::new(CsrfProxy::from(body, &token.value())));
         }
     }
 }
