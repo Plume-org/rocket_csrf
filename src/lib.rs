@@ -1,5 +1,6 @@
 #![deny(missing_docs)]
 #![cfg_attr(feature = "cargo-clippy", deny(warnings))]
+#![feature(const_str_as_bytes)]
 //! # Rocket Csrf
 //!
 //! A crate to protect you application against csrf.

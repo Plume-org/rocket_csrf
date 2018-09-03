@@ -19,6 +19,7 @@ use csrf_token::CsrfToken;
 use path::Path;
 use utils::parse_args;
 
+const CSRF_FORM_FIELD_MULTIPART: &[u8] = "Content-Disposition: form-data; name=\"csrf-token\"".as_bytes();
 
 /// Builder for [CsrfFairing](struct.CsrfFairing.html)
 ///
@@ -320,12 +321,22 @@ impl Fairing for CsrfFairing {
 
         let _ = request.guard::<CsrfToken>(); //force regeneration of csrf cookies
 
-        let token = parse_args(from_utf8(data.peek()).unwrap_or(""))
-            .filter(|(key, _)| key == &CSRF_FORM_FIELD)
-            .filter_map(|(_, token)| BASE64URL_NOPAD.decode(&token.as_bytes()).ok())
-            .filter_map(|token| csrf_engine.parse_token(&token).ok())
-            .next(); //get and parse Csrf token
-
+        let token = if request.content_type()
+                        .map(|c| c.media_type())
+                        .filter(|m| m.top()=="multipart" && m.sub()=="form-data" )
+                        .is_some() {
+            data.peek().split(|&c| c==0x0A || c==0x0D)//0x0A=='\n', 0x0D=='\r'
+                .filter(|l| l.len() > 0)
+                .skip_while(|&l| l != CSRF_FORM_FIELD_MULTIPART && l != &CSRF_FORM_FIELD_MULTIPART[..CSRF_FORM_FIELD_MULTIPART.len()-2])
+                .skip(1)
+                .map(|token| token.split(|&c| c==10 || c==13).next())
+                .next().unwrap_or(None)
+        } else {
+            parse_args(from_utf8(data.peek()).unwrap_or(""))
+                .filter_map(|(key, token)| if key == CSRF_FORM_FIELD {Some(token.as_bytes())} else {None})
+                .next()
+        }.and_then(|token| BASE64URL_NOPAD.decode(&token).ok())
+            .and_then(|token| csrf_engine.parse_token(&token).ok());
 
         if let Some(token) = token {
             if let Some(cookie) = cookie {
