@@ -1,9 +1,9 @@
 use csrf::{AesGcmCsrfProtection, CsrfProtection, CSRF_COOKIE_NAME};
 use data_encoding::{BASE64, BASE64URL_NOPAD};
-use rocket::{Request, State};
 use rocket::http::{Cookie, Status};
 use rocket::outcome::Outcome;
 use rocket::request::{self, FromRequest};
+use rocket::{Request, State};
 use serde::{Serialize, Serializer};
 use time::Duration;
 

@@ -15,18 +15,24 @@ fn parse_keyvalue(kv: &str) -> Option<(&str, &str)> {
 
 #[cfg(test)]
 mod tests {
-    use utils::{parse_keyvalue, parse_args};
+    use utils::{parse_args, parse_keyvalue};
     #[test]
     fn test_parse_keyvalue() {
-        assert_eq!(parse_keyvalue("a_key=a_value").unwrap(),("a_key", "a_value"));
+        assert_eq!(
+            parse_keyvalue("a_key=a_value").unwrap(),
+            ("a_key", "a_value")
+        );
 
-        assert_eq!(parse_keyvalue("=a_value").unwrap(),("", "a_value"));
+        assert_eq!(parse_keyvalue("=a_value").unwrap(), ("", "a_value"));
 
-        assert_eq!(parse_keyvalue("a_key=").unwrap(),("a_key", ""));
+        assert_eq!(parse_keyvalue("a_key=").unwrap(), ("a_key", ""));
 
-        assert_eq!(parse_keyvalue("a_key=a=value").unwrap(),("a_key", "a=value"));
+        assert_eq!(
+            parse_keyvalue("a_key=a=value").unwrap(),
+            ("a_key", "a=value")
+        );
 
-        assert_eq!(parse_keyvalue("=").unwrap(),("", ""));
+        assert_eq!(parse_keyvalue("=").unwrap(), ("", ""));
 
         assert!(parse_keyvalue("a_key_a_value").is_none());
 

@@ -1,5 +1,4 @@
-use csrf::{AesGcmCsrfProtection, CsrfProtection,
-        CSRF_COOKIE_NAME, CSRF_FORM_FIELD};
+use csrf::{AesGcmCsrfProtection, CsrfProtection, CSRF_COOKIE_NAME, CSRF_FORM_FIELD};
 use data_encoding::{BASE64, BASE64URL_NOPAD};
 use rand::prelude::thread_rng;
 use rand::Rng;
@@ -19,7 +18,8 @@ use csrf_token::CsrfToken;
 use path::Path;
 use utils::parse_args;
 
-const CSRF_FORM_FIELD_MULTIPART: &[u8] = "Content-Disposition: form-data; name=\"csrf-token\"".as_bytes();
+const CSRF_FORM_FIELD_MULTIPART: &[u8] =
+    "Content-Disposition: form-data; name=\"csrf-token\"".as_bytes();
 
 /// Builder for [CsrfFairing](struct.CsrfFairing.html)
 ///
@@ -321,10 +321,12 @@ impl Fairing for CsrfFairing {
 
         let _ = request.guard::<CsrfToken>(); //force regeneration of csrf cookies
 
-        let token = if request.content_type()
-                        .map(|c| c.media_type())
-                        .filter(|m| m.top()=="multipart" && m.sub()=="form-data" )
-                        .is_some() {
+        let token = if request
+            .content_type()
+            .map(|c| c.media_type())
+            .filter(|m| m.top() == "multipart" && m.sub() == "form-data")
+            .is_some()
+        {
             data.peek().split(|&c| c==0x0A || c==0x0D)//0x0A=='\n', 0x0D=='\r'
                 .filter(|l| l.len() > 0)
                 .skip_while(|&l| l != CSRF_FORM_FIELD_MULTIPART && l != &CSRF_FORM_FIELD_MULTIPART[..CSRF_FORM_FIELD_MULTIPART.len()-2])
@@ -333,7 +335,13 @@ impl Fairing for CsrfFairing {
                 .next().unwrap_or(None)
         } else {
             parse_args(from_utf8(data.peek()).unwrap_or(""))
-                .filter_map(|(key, token)| if key == CSRF_FORM_FIELD {Some(token.as_bytes())} else {None})
+                .filter_map(|(key, token)| {
+                    if key == CSRF_FORM_FIELD {
+                        Some(token.as_bytes())
+                    } else {
+                        None
+                    }
+                })
                 .next()
         }.and_then(|token| BASE64URL_NOPAD.decode(&token).ok())
             .and_then(|token| csrf_engine.parse_token(&token).ok());
@@ -379,7 +387,8 @@ impl Fairing for CsrfFairing {
         if self
             .auto_insert_disable_prefix
             .iter()
-            .any(|prefix| uri.starts_with(prefix)) {
+            .any(|prefix| uri.starts_with(prefix))
+        {
             return;
         } //if request is on an ignored prefix, ignore it
 

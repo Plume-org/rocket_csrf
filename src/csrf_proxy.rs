@@ -1,8 +1,7 @@
-use std::io::{Read, Error};
+use csrf_proxy::ParseState::*;
 use std::cmp;
 use std::collections::VecDeque;
-use csrf_proxy::ParseState::*;
-
+use std::io::{Error, Read};
 
 #[derive(Debug)]
 struct Buffer {
@@ -30,20 +29,21 @@ impl Buffer {
             let buf_len = buf.len() - read;
             let to_copy = cmp::min(part_len, buf_len);
             buf[read..read + to_copy]
-                .copy_from_slice(&self.buf[0][self.pos[0]..self.pos[0]+to_copy]);
+                .copy_from_slice(&self.buf[0][self.pos[0]..self.pos[0] + to_copy]);
             read += to_copy;
             if part_len == to_copy {
                 self.buf.pop_front();
                 self.pos.pop_front();
             } else {
-                self.pos[0]+=to_copy;
+                self.pos[0] += to_copy;
             }
         }
         read
     }
 
     fn len(&self) -> usize {
-        self.buf.iter().fold(0, |size, buf| size+buf.len()) - self.pos.iter().fold(0, |size, pos| size + pos)
+        self.buf.iter().fold(0, |size, buf| size + buf.len())
+            - self.pos.iter().fold(0, |size, pos| size + pos)
     }
 
     fn is_empty(&self) -> bool {
@@ -57,16 +57,15 @@ impl Default for Buffer {
     }
 }
 
-
 #[derive(Debug)]
 enum ParseState {
-    Init,                           //default state
-    PartialFormMatch,               //when parsing "<form"
-    SearchFormElem,                 //like default state, but inside a form
-    PartialFormElemMatch,           //when parsing "<input", "<textarea" or other form elems, and "</form"
-    SearchMethod(usize),            //when inside the first <input>, search for begining of a param
-    PartialNameMatch(usize),        //when parsing "name="_method""
-    CloseInputTag,                  //only if insert after, search for '>' of a "<input name=\"_method\">"
+    Init,                    //default state
+    PartialFormMatch,        //when parsing "<form"
+    SearchFormElem,          //like default state, but inside a form
+    PartialFormElemMatch,    //when parsing "<input", "<textarea" or other form elems, and "</form"
+    SearchMethod(usize),     //when inside the first <input>, search for begining of a param
+    PartialNameMatch(usize), //when parsing "name="_method""
+    CloseInputTag,           //only if insert after, search for '>' of a "<input name=\"_method\">"
 }
 
 pub struct CsrfProxy<'a> {
@@ -74,7 +73,7 @@ pub struct CsrfProxy<'a> {
     token: Vec<u8>,             //a full input tag loaded with a valid token
     buf: Buffer,
     unparsed: Vec<u8>,
-    state: ParseState,          //state of the parser
+    state: ParseState, //state of the parser
     eof: bool,
 }
 
@@ -100,46 +99,46 @@ impl<'a> CsrfProxy<'a> {
 
 impl<'a> Read for CsrfProxy<'a> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
-
         while self.buf.len() < buf.len() && !(self.eof && self.unparsed.is_empty()) {
             let len = if !self.eof {
                 let unparsed_len = self.unparsed.len();
-                self.unparsed.resize(4096,0);
-                unparsed_len +
-                    match self.underlying.read(&mut self.unparsed[unparsed_len..]) {
-                        Ok(0) => {
-                            self.eof = true;
-                            0
-                        },
-                        Ok(len) => len,
-                        Err(e) => return Err(e),
+                self.unparsed.resize(4096, 0);
+                unparsed_len + match self.underlying.read(&mut self.unparsed[unparsed_len..]) {
+                    Ok(0) => {
+                        self.eof = true;
+                        0
                     }
+                    Ok(len) => len,
+                    Err(e) => return Err(e),
+                }
             } else {
                 self.unparsed.len()
             };
 
-            self.unparsed.resize(len, 0);//we growed unparsed buffer to 4k before, so shrink it to it's needed size
+            self.unparsed.resize(len, 0); //we growed unparsed buffer to 4k before, so shrink it to it's needed size
 
             let (consumed, insert_token) = {
-                let mut buf = &self.unparsed[..len];//work only on the initialized part
+                let mut buf = &self.unparsed[..len]; //work only on the initialized part
                 let mut consumed = 0;
                 let mut leave = false;
                 let mut insert_token = false;
                 while !leave {
                     self.state = match self.state {
                         Init => {
-                            if let Some(tag_pos) = buf.iter().position(|&c| c as char=='<') {
+                            if let Some(tag_pos) = buf.iter().position(|&c| c as char == '<') {
                                 buf = &buf[tag_pos..];
-                                consumed+=tag_pos;
+                                consumed += tag_pos;
                                 PartialFormMatch
                             } else {
                                 leave = true;
                                 consumed += buf.len();
                                 Init
                             }
-                        },
+                        }
                         PartialFormMatch => {
-                            if let Some(lower_begin) = buf.get(1..5).map(|slice| slice.to_ascii_lowercase()) {
+                            if let Some(lower_begin) =
+                                buf.get(1..5).map(|slice| slice.to_ascii_lowercase())
+                            {
                                 buf = &buf[5..];
                                 consumed += 5;
                                 if lower_begin == "form".as_bytes() {
@@ -148,30 +147,34 @@ impl<'a> Read for CsrfProxy<'a> {
                                     Init
                                 }
                             } else {
-                               leave = true;
-                               PartialFormMatch
+                                leave = true;
+                                PartialFormMatch
                             }
-                        },
+                        }
                         SearchFormElem => {
-                            if let Some(tag_pos) = buf.iter().position(|&c| c as char=='<') {
+                            if let Some(tag_pos) = buf.iter().position(|&c| c as char == '<') {
                                 buf = &buf[tag_pos..];
-                                consumed+=tag_pos;
+                                consumed += tag_pos;
                                 PartialFormElemMatch
                             } else {
                                 leave = true;
                                 consumed += buf.len();
                                 SearchFormElem
-                            }},
+                            }
+                        }
                         PartialFormElemMatch => {
-                            if let Some(lower_begin) = buf.get(1..9).map(|slice| slice.to_ascii_lowercase()) {
+                            if let Some(lower_begin) =
+                                buf.get(1..9).map(|slice| slice.to_ascii_lowercase())
+                            {
                                 if lower_begin.starts_with("/form".as_bytes())
                                     || lower_begin.starts_with("textarea".as_bytes())
                                     || lower_begin.starts_with("button".as_bytes())
-                                    || lower_begin.starts_with("select".as_bytes()) {
+                                    || lower_begin.starts_with("select".as_bytes())
+                                {
                                     insert_token = true;
                                     leave = true;
                                     Init
-                                } else if lower_begin.starts_with("input".as_bytes()){
+                                } else if lower_begin.starts_with("input".as_bytes()) {
                                     SearchMethod(6)
                                 } else {
                                     buf = &buf[9..];
@@ -179,15 +182,19 @@ impl<'a> Read for CsrfProxy<'a> {
                                     SearchFormElem
                                 }
                             } else {
-                               leave = true;
-                               SearchFormElem
+                                leave = true;
+                                SearchFormElem
                             }
-                        },
+                        }
                         SearchMethod(pos) => {
-                            if let Some(meth_pos) = buf[pos..].iter().position(|&c| c as char == ' ' || c as char == '>') {
+                            if let Some(meth_pos) = buf[pos..]
+                                .iter()
+                                .position(|&c| c as char == ' ' || c as char == '>')
+                            {
                                 if buf[meth_pos + pos] as char == ' ' {
                                     PartialNameMatch(meth_pos + pos + 1)
-                                } else { //reached '>'
+                                } else {
+                                    //reached '>'
                                     insert_token = true;
                                     leave = true;
                                     Init
@@ -196,38 +203,42 @@ impl<'a> Read for CsrfProxy<'a> {
                                 leave = true;
                                 SearchMethod(buf.len())
                             }
-                        },
+                        }
                         PartialNameMatch(pos) => {
-                            if let Some(lower_begin) = buf.get(pos..pos+14).map(|slice| slice.to_ascii_lowercase()) {
+                            if let Some(lower_begin) = buf
+                                .get(pos..pos + 14)
+                                .map(|slice| slice.to_ascii_lowercase())
+                            {
                                 if lower_begin.starts_with("name=\"_method\"".as_bytes())
-                                    || lower_begin.starts_with("name='_method'".as_bytes()) {
-                                    buf = &buf[pos+14..];
-                                    consumed += pos+14;
+                                    || lower_begin.starts_with("name='_method'".as_bytes())
+                                {
+                                    buf = &buf[pos + 14..];
+                                    consumed += pos + 14;
                                     CloseInputTag
                                 } else if lower_begin.starts_with("name=_method".as_bytes()) {
-                                    buf = &buf[pos+12..];
-                                    consumed += pos+12;
+                                    buf = &buf[pos + 12..];
+                                    consumed += pos + 12;
                                     CloseInputTag
                                 } else {
                                     SearchMethod(pos)
                                 }
                             } else {
-                               leave = true;
-                               PartialNameMatch(pos)
+                                leave = true;
+                                PartialNameMatch(pos)
                             }
-                        },
+                        }
                         CloseInputTag => {
                             leave = true;
-                            if let Some(tag_pos) = buf.iter().position(|&c| c as char=='>') {
-                                buf = &buf[tag_pos+1..];
-                                consumed+=tag_pos+1;
+                            if let Some(tag_pos) = buf.iter().position(|&c| c as char == '>') {
+                                buf = &buf[tag_pos + 1..];
+                                consumed += tag_pos + 1;
                                 insert_token = true;
                                 Init
                             } else {
                                 consumed += buf.len();
                                 CloseInputTag
                             }
-                        },
+                        }
                     }
                 }
                 (consumed, insert_token)
@@ -243,9 +254,9 @@ impl<'a> Read for CsrfProxy<'a> {
 }
 
 #[cfg(test)]
-mod tests{
+mod tests {
     use csrf_proxy::{Buffer, CsrfProxy};
-    use std::io::{Cursor,Read};
+    use std::io::{Cursor, Read};
 
     #[test]
     fn test_buffer_size() {
@@ -270,26 +281,26 @@ mod tests{
         let mut buffer = Buffer::new();
         let mut buf = [0; 8];
 
-        buffer.push_back(vec![0,1,2,3,4,5,6,7,8,9]);
-        buffer.push_back(vec![10,11,12,13,14,15,16,17,18,19]);
+        buffer.push_back(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        buffer.push_back(vec![10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
 
         let size = buffer.read(&mut buf);
         assert_eq!(size, 8);
-        assert_eq!(buf,[0,1,2,3,4,5,6,7]);
+        assert_eq!(buf, [0, 1, 2, 3, 4, 5, 6, 7]);
 
-        buffer.push_back(vec![20,21,22,23,24,25,26,27,28,29]);
-
-        let size = buffer.read(&mut buf);
-        assert_eq!(size, 8);
-        assert_eq!(buf,[8,9,10,11,12,13,14,15]);
+        buffer.push_back(vec![20, 21, 22, 23, 24, 25, 26, 27, 28, 29]);
 
         let size = buffer.read(&mut buf);
         assert_eq!(size, 8);
-        assert_eq!(buf,[16,17,18,19,20,21,22,23]);
+        assert_eq!(buf, [8, 9, 10, 11, 12, 13, 14, 15]);
+
+        let size = buffer.read(&mut buf);
+        assert_eq!(size, 8);
+        assert_eq!(buf, [16, 17, 18, 19, 20, 21, 22, 23]);
 
         let size = buffer.read(&mut buf);
         assert_eq!(size, 6);
-        assert_eq!(buf[..6], [24,25,26,27,28,29]);
+        assert_eq!(buf[..6], [24, 25, 26, 27, 28, 29]);
 
         let size = buffer.read(&mut buf);
         assert_eq!(size, 0);
@@ -305,12 +316,13 @@ mod tests{
   <body>
     Body of this simple doc
   </body>
-</html>".as_bytes();
+</html>"
+            .as_bytes();
         let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
         let mut pr_data = Vec::new();
         let read = proxy.read_to_end(&mut pr_data);
         assert_eq!(read.unwrap(), data.len());
-        assert_eq!(&pr_data,&data)
+        assert_eq!(&pr_data, &data)
     }
 
     #[test]
@@ -327,7 +339,8 @@ mod tests{
         </p>
      </form>
   </body>
-</html>".as_bytes();
+</html>"
+            .as_bytes();
         let expected = "<!DOCTYPE html>
 <html>
   <head>
@@ -340,12 +353,16 @@ mod tests{
         </p>
      <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/></form>
   </body>
-</html>".as_bytes();
+</html>"
+            .as_bytes();
         let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
         let mut pr_data = Vec::new();
         let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(read.unwrap(), data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len());
-        assert_eq!(&pr_data,&expected)
+        assert_eq!(
+            read.unwrap(),
+            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+        );
+        assert_eq!(&pr_data, &expected)
     }
 
     #[test]
@@ -360,7 +377,8 @@ mod tests{
         <input name=\"name\"/>
      </form>
   </body>
-</html>".as_bytes();
+</html>"
+            .as_bytes();
         let expected = "<!DOCTYPE html>
 <html>
   <head>
@@ -371,12 +389,16 @@ mod tests{
         <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/><input name=\"name\"/>
      </form>
   </body>
-</html>".as_bytes();
+</html>"
+            .as_bytes();
         let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
         let mut pr_data = Vec::new();
         let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(read.unwrap(), data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len());
-        assert_eq!(&pr_data,&expected)
+        assert_eq!(
+            read.unwrap(),
+            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+        );
+        assert_eq!(&pr_data, &expected)
     }
 
     #[test]
@@ -391,7 +413,8 @@ mod tests{
         <input name=\"_method\"/>
      </form>
   </body>
-</html>".as_bytes();
+</html>"
+            .as_bytes();
         let expected = "<!DOCTYPE html>
 <html>
   <head>
@@ -402,15 +425,19 @@ mod tests{
         <input name=\"_method\"/><input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>
      </form>
   </body>
-</html>".as_bytes();
+</html>"
+            .as_bytes();
         let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
         let mut pr_data = Vec::new();
         let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(read.unwrap(), data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len());
-        assert_eq!(&pr_data,&expected)
+        assert_eq!(
+            read.unwrap(),
+            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+        );
+        assert_eq!(&pr_data, &expected)
     }
 
-    struct ErrorReader{}
+    struct ErrorReader {}
 
     impl Read for ErrorReader {
         fn read(&mut self, _buf: &mut [u8]) -> Result<usize, ::std::io::Error> {
@@ -420,15 +447,18 @@ mod tests{
 
     #[test]
     fn test_relay_error() {
-        let buf = &mut[0; 1];
-        let err = ErrorReader{};
+        let buf = &mut [0; 1];
+        let err = ErrorReader {};
         let mut proxy_err = CsrfProxy::from(Box::new(err), &[0]);
         let read = proxy_err.read(buf).unwrap_err();
-        assert_eq!(read.kind(), ::std::io::Error::new(::std::io::ErrorKind::Other, "").kind());
+        assert_eq!(
+            read.kind(),
+            ::std::io::Error::new(::std::io::ErrorKind::Other, "").kind()
+        );
     }
 
-    struct SlowReader<'a>{
-        content: &'a[u8],
+    struct SlowReader<'a> {
+        content: &'a [u8],
     }
 
     impl<'a> Read for SlowReader<'a> {
@@ -444,7 +474,8 @@ mod tests{
     }
 
     #[test]
-    fn test_difficult_cut() {//this basically re-test the parser, using short reads so it encounter rare code paths
+    fn test_difficult_cut() {
+        //this basically re-test the parser, using short reads so it encounter rare code paths
         let data = "<!DOCTYPE html>
 <html>
   <head>
@@ -457,7 +488,8 @@ mod tests{
         </p>
      </form>
   </body>
-</html>".as_bytes();
+</html>"
+            .as_bytes();
         let expected = "<!DOCTYPE html>
 <html>
   <head>
@@ -470,12 +502,16 @@ mod tests{
         </p>
      <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/></form>
   </body>
-</html>".as_bytes();
-        let mut proxy = CsrfProxy::from(Box::new(SlowReader{content: data}), "abcd".as_bytes());
+</html>"
+            .as_bytes();
+        let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
         let mut pr_data = Vec::new();
         let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(read.unwrap(), data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len());
-        assert_eq!(&pr_data,&expected);
+        assert_eq!(
+            read.unwrap(),
+            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+        );
+        assert_eq!(&pr_data, &expected);
 
         let data = "<!DOCTYPE html>
 <html>
@@ -487,7 +523,8 @@ mod tests{
         <input name=\"name\"/>
      </form>
   </body>
-</html>".as_bytes();
+</html>"
+            .as_bytes();
         let expected = "<!DOCTYPE html>
 <html>
   <head>
@@ -498,12 +535,16 @@ mod tests{
         <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/><input name=\"name\"/>
      </form>
   </body>
-</html>".as_bytes();
-        let mut proxy = CsrfProxy::from(Box::new(SlowReader{content: data}), "abcd".as_bytes());
+</html>"
+            .as_bytes();
+        let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
         let mut pr_data = Vec::new();
         let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(read.unwrap(), data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len());
-        assert_eq!(&pr_data,&expected);
+        assert_eq!(
+            read.unwrap(),
+            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+        );
+        assert_eq!(&pr_data, &expected);
 
         let data = "<!DOCTYPE html>
 <html>
@@ -515,7 +556,8 @@ mod tests{
         <input name=\"_method\"/>
      </form>
   </body>
-</html>".as_bytes();
+</html>"
+            .as_bytes();
         let expected = "<!DOCTYPE html>
 <html>
   <head>
@@ -526,11 +568,15 @@ mod tests{
         <input name=\"_method\"/><input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>
      </form>
   </body>
-</html>".as_bytes();
-        let mut proxy = CsrfProxy::from(Box::new(SlowReader{content: data}), "abcd".as_bytes());
+</html>"
+            .as_bytes();
+        let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
         let mut pr_data = Vec::new();
         let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(read.unwrap(), data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len());
-        assert_eq!(&pr_data,&expected)
+        assert_eq!(
+            read.unwrap(),
+            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+        );
+        assert_eq!(&pr_data, &expected)
     }
 }

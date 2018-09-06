@@ -49,11 +49,11 @@ extern crate rocket;
 extern crate serde;
 extern crate time;
 
-mod csrf_proxy;
 mod csrf_fairing;
+mod csrf_proxy;
 mod csrf_token;
 mod path;
 mod utils;
 
-pub use self::csrf_fairing::{CsrfFairingBuilder, CsrfFairing};
+pub use self::csrf_fairing::{CsrfFairing, CsrfFairingBuilder};
 pub use self::csrf_token::CsrfToken;
