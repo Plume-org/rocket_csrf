@@ -63,7 +63,7 @@ enum ParseState {
     Init,                           //default state
     PartialFormMatch,               //when parsing "<form"
     SearchFormElem,                 //like default state, but inside a form
-    PartialFormElemMatch,           //when parsing "<input"
+    PartialFormElemMatch,           //when parsing "<input", "<textarea" or other form elems, and "</form"
     SearchMethod(usize),            //when inside the first <input>, search for begining of a param
     PartialNameMatch(usize),        //when parsing "name="_method""
     CloseInputTag,                  //only if insert after, search for '>' of a "<input name=\"_method\">"
@@ -118,7 +118,7 @@ impl<'a> Read for CsrfProxy<'a> {
                 self.unparsed.len()
             };
 
-            self.unparsed.resize(len, 0);//we growed unparsed buffer to 4k before, so shrink it to it's neaded size
+            self.unparsed.resize(len, 0);//we growed unparsed buffer to 4k before, so shrink it to it's needed size
 
             let (consumed, insert_token) = {
                 let mut buf = &self.unparsed[..len];//work only on the initialized part
@@ -180,7 +180,7 @@ impl<'a> Read for CsrfProxy<'a> {
                                 }
                             } else {
                                leave = true;
-                               PartialFormMatch
+                               SearchFormElem
                             }
                         },
                         SearchMethod(pos) => {
@@ -328,7 +328,7 @@ mod tests{
      </form>
   </body>
 </html>".as_bytes();
-    let expected = "<!DOCTYPE html>
+        let expected = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -361,7 +361,7 @@ mod tests{
      </form>
   </body>
 </html>".as_bytes();
-    let expected = "<!DOCTYPE html>
+        let expected = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -392,7 +392,7 @@ mod tests{
      </form>
   </body>
 </html>".as_bytes();
-    let expected = "<!DOCTYPE html>
+        let expected = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -404,6 +404,130 @@ mod tests{
   </body>
 </html>".as_bytes();
         let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+        let mut pr_data = Vec::new();
+        let read = proxy.read_to_end(&mut pr_data);
+        assert_eq!(read.unwrap(), data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len());
+        assert_eq!(&pr_data,&expected)
+    }
+
+    struct ErrorReader{}
+
+    impl Read for ErrorReader {
+        fn read(&mut self, _buf: &mut [u8]) -> Result<usize, ::std::io::Error> {
+            Err(::std::io::Error::new(::std::io::ErrorKind::Other, ""))
+        }
+    }
+
+    #[test]
+    fn test_relay_error() {
+        let buf = &mut[0; 1];
+        let err = ErrorReader{};
+        let mut proxy_err = CsrfProxy::from(Box::new(err), &[0]);
+        let read = proxy_err.read(buf).unwrap_err();
+        assert_eq!(read.kind(), ::std::io::Error::new(::std::io::ErrorKind::Other, "").kind());
+    }
+
+    struct SlowReader<'a>{
+        content: &'a[u8],
+    }
+
+    impl<'a> Read for SlowReader<'a> {
+        fn read(&mut self, buf: &mut [u8]) -> Result<usize, ::std::io::Error> {
+            if self.content.len() > 0 {
+                buf[0] = self.content[0];
+                self.content = &self.content[1..];
+                Ok(1)
+            } else {
+                Ok(0)
+            }
+        }
+    }
+
+    #[test]
+    fn test_difficult_cut() {//this basically re-test the parser, using short reads so it encounter rare code paths
+        let data = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <p>
+          some text
+        </p>
+     </form>
+  </body>
+</html>".as_bytes();
+        let expected = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <p>
+          some text
+        </p>
+     <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/></form>
+  </body>
+</html>".as_bytes();
+        let mut proxy = CsrfProxy::from(Box::new(SlowReader{content: data}), "abcd".as_bytes());
+        let mut pr_data = Vec::new();
+        let read = proxy.read_to_end(&mut pr_data);
+        assert_eq!(read.unwrap(), data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len());
+        assert_eq!(&pr_data,&expected);
+
+        let data = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <input name=\"name\"/>
+     </form>
+  </body>
+</html>".as_bytes();
+        let expected = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/><input name=\"name\"/>
+     </form>
+  </body>
+</html>".as_bytes();
+        let mut proxy = CsrfProxy::from(Box::new(SlowReader{content: data}), "abcd".as_bytes());
+        let mut pr_data = Vec::new();
+        let read = proxy.read_to_end(&mut pr_data);
+        assert_eq!(read.unwrap(), data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len());
+        assert_eq!(&pr_data,&expected);
+
+        let data = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <input name=\"_method\"/>
+     </form>
+  </body>
+</html>".as_bytes();
+        let expected = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <input name=\"_method\"/><input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>
+     </form>
+  </body>
+</html>".as_bytes();
+        let mut proxy = CsrfProxy::from(Box::new(SlowReader{content: data}), "abcd".as_bytes());
         let mut pr_data = Vec::new();
         let read = proxy.read_to_end(&mut pr_data);
         assert_eq!(read.unwrap(), data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len());
