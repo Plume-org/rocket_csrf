@@ -114,9 +114,9 @@ impl<'a> Read for CsrfProxy<'a> {
             } else {
                 let offset = self.buf.read(buf);
                 let unparsed_len = self.unparsed.len();
-                buf[offset..offset+unparsed_len].copy_from_slice(&self.unparsed);
+                buf[offset..offset + unparsed_len].copy_from_slice(&self.unparsed);
                 self.unparsed.clear();
-                return  Ok(unparsed_len+offset)
+                return Ok(unparsed_len + offset);
             };
 
             self.unparsed.resize(len, 0); //we growed unparsed buffer to 4k before, so shrink it to it's needed size

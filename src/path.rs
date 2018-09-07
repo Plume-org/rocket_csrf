@@ -151,7 +151,7 @@ impl Path {
                 }
             }
         }
-        if res.len()==0 {
+        if res.len() == 0 {
             res.push('/');
         }
         if let Some(ref keymap) = self.param {
@@ -365,10 +365,10 @@ mod tests {
 
     #[test]
     fn test_empty_url() {
-        let query= Path::from("/");
+        let query = Path::from("/");
         assert_eq!(query.map(&HashMap::new()).unwrap(), "/");
 
-        let query= Path::from("/?param=<value>");
+        let query = Path::from("/?param=<value>");
 
         let hashmap = query.extract("/?param=something").unwrap();
         assert_eq!(hashmap.len(), 1);
