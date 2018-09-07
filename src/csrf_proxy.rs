@@ -112,7 +112,11 @@ impl<'a> Read for CsrfProxy<'a> {
                     Err(e) => return Err(e),
                 }
             } else {
-                self.unparsed.len()
+                let offset = self.buf.read(buf);
+                let unparsed_len = self.unparsed.len();
+                buf[offset..offset+unparsed_len].copy_from_slice(&self.unparsed);
+                self.unparsed.clear();
+                return  Ok(unparsed_len+offset)
             };
 
             self.unparsed.resize(len, 0); //we growed unparsed buffer to 4k before, so shrink it to it's needed size
@@ -181,6 +185,9 @@ impl<'a> Read for CsrfProxy<'a> {
                                     consumed += 9;
                                     SearchFormElem
                                 }
+                            } else if buf.len() < 9 {
+                                leave = true;
+                                PartialFormElemMatch
                             } else {
                                 leave = true;
                                 SearchFormElem
@@ -434,6 +441,38 @@ mod tests {
             read.unwrap(),
             data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
         );
+        assert_eq!(&pr_data, &expected);
+        let data = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <input name=_method/>
+     </form>
+  </body>
+</html>"
+            .as_bytes();
+        let expected = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <input name=_method/><input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>
+     </form>
+  </body>
+</html>"
+            .as_bytes();
+        let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+        pr_data.clear();
+        let read = proxy.read_to_end(&mut pr_data);
+        assert_eq!(
+            read.unwrap(),
+            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+        );
         assert_eq!(&pr_data, &expected)
     }
 
@@ -553,7 +592,7 @@ mod tests {
   </head>
   <body>
      <form>
-        <input name=\"_method\"/>
+        <input name=\"not_method\"/>
      </form>
   </body>
 </html>"
@@ -565,7 +604,40 @@ mod tests {
   </head>
   <body>
      <form>
-        <input name=\"_method\"/><input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>
+        <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/><input name=\"not_method\"/>
+     </form>
+  </body>
+</html>"
+            .as_bytes();
+        let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
+        pr_data.clear();
+        let read = proxy.read_to_end(&mut pr_data);
+        assert_eq!(
+            read.unwrap(),
+            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+        );
+        assert_eq!(&pr_data, &expected);
+
+        let data = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <input name='_method'/>
+     </form>
+  </body>
+</html>"
+            .as_bytes();
+        let expected = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <input name='_method'/><input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>
      </form>
   </body>
 </html>"
@@ -578,5 +650,26 @@ mod tests {
             data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
         );
         assert_eq!(&pr_data, &expected)
+    }
+
+    #[test]
+    fn test_eof() {
+        let data = "<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form>
+        <p>
+          some text
+        </p>"
+            .as_bytes();
+
+        let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+        let mut pr_data = Vec::new();
+        let read = proxy.read_to_end(&mut pr_data);
+        assert_eq!(read.unwrap(), data.len());
+        assert_eq!(&pr_data, &data)
     }
 }
