@@ -3,7 +3,7 @@ use data_encoding::{BASE64, BASE64URL_NOPAD};
 use rand::prelude::thread_rng;
 use rand::Rng;
 use rocket::fairing::{Fairing, Info, Kind};
-use rocket::http::uri::Uri;
+use rocket::http::uri::{Uri, Origin};
 use rocket::http::Method::{self, *};
 use rocket::outcome::Outcome;
 use rocket::response::Body::Sized;
@@ -359,9 +359,11 @@ impl Fairing for CsrfFairing {
         for (src, dst, method) in &self.exceptions {
             if let Some(param) = src.extract(&request.uri().to_string()) {
                 if let Some(destination) = dst.map(&param) {
-                    request.set_uri(destination);
-                    request.set_method(*method);
-                    return;
+                    if let Ok(origin) = Origin::parse_owned(destination) {
+                        request.set_uri(origin);
+                        request.set_method(*method);
+                        return;
+                    }
                 }
             }
         }
@@ -372,7 +374,10 @@ impl Fairing for CsrfFairing {
         let uri = Uri::percent_encode(&uri);
         let mut param: HashMap<&str, String> = HashMap::new();
         param.insert("uri", uri.to_string());
-        request.set_uri(self.default_target.0.map(&param).unwrap());
+        let destination = self.default_target.0.map(&param).unwrap();
+        let origin = Origin::parse_owned(destination).unwrap();
+
+        request.set_uri(origin);
         request.set_method(self.default_target.1)
     }
 
