@@ -185,12 +185,9 @@ impl<'a> Read for CsrfProxy<'a> {
                                     consumed += 9;
                                     SearchFormElem
                                 }
-                            } else if buf.len() < 9 {
-                                leave = true;
-                                PartialFormElemMatch
                             } else {
                                 leave = true;
-                                SearchFormElem
+                                PartialFormElemMatch
                             }
                         }
                         SearchMethod(pos) => {
