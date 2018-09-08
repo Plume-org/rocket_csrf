@@ -428,40 +428,71 @@ impl Fairing for CsrfFairing {
 mod tests {
     use super::*;
     use csrf::{CSRF_COOKIE_NAME, CSRF_FORM_FIELD};
-    use ::rocket::{local::{Client, LocalRequest}, http::{Cookie, Header, Method}, Rocket};
+    use rocket::{
+        http::{Cookie, Header, Method}, local::{Client, LocalRequest}, Rocket,
+    };
 
     fn default_builder() -> CsrfFairingBuilder {
         super::CsrfFairingBuilder::new()
             .set_default_target("/csrf".to_owned(), Method::Get)
-            .set_exceptions(vec![("/ex1".to_owned(), "/ex1-target".to_owned(), Method::Post)])
-            .add_exceptions(vec![("/ex2/<dyn>".to_owned(), "/ex2-target/<dyn>".to_owned(), Method::Get)])
+            .set_exceptions(vec![(
+                "/ex1".to_owned(),
+                "/ex1-target".to_owned(),
+                Method::Post,
+            )])
+            .add_exceptions(vec![(
+                "/ex2/<dyn>".to_owned(),
+                "/ex2-target/<dyn>".to_owned(),
+                Method::Get,
+            )])
     }
 
     fn default_rocket(csrf_fairing: CsrfFairing) -> Rocket {
         ::rocket::ignite()
-            .mount("/", routes![index, post_index, token, csrf, get_ex1, post_ex1, target_ex1, post_ex2, target_ex2, static_route])
+            .mount(
+                "/",
+                routes![
+                    index,
+                    post_index,
+                    token,
+                    csrf,
+                    get_ex1,
+                    post_ex1,
+                    target_ex1,
+                    post_ex2,
+                    target_ex2,
+                    static_route
+                ],
+            )
             .attach(csrf_fairing)
     }
 
-    fn get_token(client: &Client) -> (String,String) {
-        let mut response = client.get("/token").dispatch();//get token and cookie
+    fn get_token(client: &Client) -> (String, String) {
+        let mut response = client.get("/token").dispatch(); //get token and cookie
         let token = response.body_string().unwrap();
-        let cookie = response.headers().get("set-cookie").next().unwrap().split(|c| c=='=' || c==';').nth(1).unwrap().to_owned();
+        let cookie = response
+            .headers()
+            .get("set-cookie")
+            .next()
+            .unwrap()
+            .split(|c| c == '=' || c == ';')
+            .nth(1)
+            .unwrap()
+            .to_owned();
         (token, cookie)
     }
 
-    fn post_token(client: &Client, path: String, token: String, cookie: String) -> LocalRequest{
+    fn post_token(client: &Client, path: String, token: String, cookie: String) -> LocalRequest {
         let token = if token.len() > 0 {
             let mut t = Vec::new();
             t.append(&mut CSRF_FORM_FIELD.as_bytes().to_vec());
-            t.push(0x3D);//'='
+            t.push(0x3D); //'='
             t.append(&mut token.as_bytes().to_vec());
             t
         } else {
             Vec::new()
         };
-        let req = client.post(path)
-            .body(&token);
+        let req = client.post(path).body(&token);
         if cookie.len() > 0 {
             req.cookie(Cookie::new(CSRF_COOKIE_NAME, cookie))
         } else {
@@ -474,13 +505,13 @@ mod tests {
         let rocket = default_rocket(default_builder().finalize().unwrap());
         let client = Client::new(rocket).expect("valid rocket instance");
 
-        let mut response = client.post("/").dispatch();//violation well detected
+        let mut response = client.post("/").dispatch(); //violation well detected
         assert_eq!(response.body_string(), Some("violation".to_owned()));
 
-        let mut response = client.post("/ex1").dispatch();//redirection on post
+        let mut response = client.post("/ex1").dispatch(); //redirection on post
         assert_eq!(response.body_string(), Some("target-ex1".to_owned()));
 
-        let mut response = client.post("/ex2/abcd").dispatch();//redirection with dyn part
+        let mut response = client.post("/ex2/abcd").dispatch(); //redirection with dyn part
         assert_eq!(response.body_string(), Some("abcd".to_owned()));
     }
 
@@ -489,18 +520,25 @@ mod tests {
         let rocket = default_rocket(default_builder().finalize().unwrap());
         let client = Client::new(rocket).expect("valid rocket instance");
 
-        let mut response = client.get("/ex1").dispatch();//no redirection on get
+        let mut response = client.get("/ex1").dispatch(); //no redirection on get
         assert_eq!(response.body_string(), Some("get-ex1".to_owned()));
 
         let (token, cookie) = get_token(&client);
 
-        let mut response = post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).dispatch();
+        let mut response =
+            post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).dispatch();
         assert_eq!(response.body_string(), Some("success".to_owned()));
 
-        let mut response = post_token(&client, "/ex1".to_owned(), token.clone(), cookie.clone()).dispatch();
+        let mut response =
+            post_token(&client, "/ex1".to_owned(), token.clone(), cookie.clone()).dispatch();
         assert_eq!(response.body_string(), Some("post-ex1".to_owned()));
 
-        let mut response = post_token(&client, "/ex2/some-url".to_owned(), token.clone(), cookie.clone()).dispatch();
+        let mut response = post_token(
+            &client,
+            "/ex2/some-url".to_owned(),
+            token.clone(),
+            cookie.clone(),
+        ).dispatch();
         assert_eq!(response.body_string(), Some("valid-dyn-req".to_owned()));
     }
 
@@ -511,12 +549,14 @@ mod tests {
 
         let (token, cookie) = get_token(&client);
 
-        let mut response = post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).dispatch();
+        let mut response =
+            post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).dispatch();
         assert_eq!(response.body_string(), Some("success".to_owned()));
         ::std::thread::sleep(::std::time::Duration::from_secs(6));
 
         //access / with timed out token
-        let mut response = post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).dispatch();
+        let mut response =
+            post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).dispatch();
         assert_eq!(response.body_string(), Some("violation".to_owned()));
     }
 
@@ -530,16 +570,19 @@ mod tests {
         let (token, cookie) = get_token(&client1);
 
         //having only one part fail
-        let mut response = post_token(&client2, "/".to_owned(), token.clone(), "".to_owned()).dispatch();
+        let mut response =
+            post_token(&client2, "/".to_owned(), token.clone(), "".to_owned()).dispatch();
         assert_eq!(response.body_string(), Some("violation".to_owned()));
 
-        let mut response = post_token(&client1, "/".to_owned(), "".to_owned(), cookie.clone()).dispatch();
+        let mut response =
+            post_token(&client1, "/".to_owned(), "".to_owned(), cookie.clone()).dispatch();
         assert_eq!(response.body_string(), Some("violation".to_owned()));
 
         let (token2, _cookie2) = get_token(&client2);
 
         //having 2 incompatible parts fail
-        let mut response = post_token(&client1, "/".to_owned(), token2.clone(), cookie.clone()).dispatch();
+        let mut response =
+            post_token(&client1, "/".to_owned(), token2.clone(), cookie.clone()).dispatch();
         assert_eq!(response.body_string(), Some("violation".to_owned()));
     }
 
@@ -553,14 +596,16 @@ mod tests {
         let mut body = Vec::new();
         body.append(&mut "key1=value1&".as_bytes().to_vec());
         body.append(&mut CSRF_FORM_FIELD.as_bytes().to_vec());
-        body.push(0x3D);//'='
+        body.push(0x3D); //'='
         body.append(&mut token.as_bytes().to_vec());
         body.append(&mut "&key2=value2".as_bytes().to_vec());
-        let mut response = client.post("/")
+        let mut response = client
+            .post("/")
             .body(body)
             .cookie(Cookie::new("something", "before"))
             .cookie(Cookie::new(CSRF_COOKIE_NAME, cookie))
-            .cookie(Cookie::new("and", "after")).dispatch();
+            .cookie(Cookie::new("and", "after"))
+            .dispatch();
 
         assert_eq!(response.body_string(), Some("success".to_owned()));
     }
@@ -595,11 +640,14 @@ How are you?
         body.append(&mut body_middle.as_bytes().to_vec());
         body.append(&mut token.as_bytes().to_vec());
         body.append(&mut body_after.as_bytes().to_vec());
-        let mut response = client.post("/")
-            .header(Header::new("Content-Type",
-                                "multipart/form-data; boundary=\
-                                ---------------------------\
-                                9051914041544843365972754266"))
+        let mut response = client
+            .post("/")
+            .header(Header::new(
+                "Content-Type",
+                "multipart/form-data; boundary=\
+                 ---------------------------\
+                 9051914041544843365972754266",
+            ))
             .body(body)
             .cookie(Cookie::new(CSRF_COOKIE_NAME, cookie.clone()))
             .dispatch();
@@ -611,11 +659,14 @@ How are you?
         body.append(&mut body_middle.as_bytes().to_vec());
         body.append(&mut "not_a_token".as_bytes().to_vec());
         body.append(&mut body_after.as_bytes().to_vec());
-        let mut response = client.post("/")
-            .header(Header::new("Content-Type",
-                                "multipart/form-data; boundary=\
-                                ---------------------------\
-                                9051914041544843365972754266"))
+        let mut response = client
+            .post("/")
+            .header(Header::new(
+                "Content-Type",
+                "multipart/form-data; boundary=\
+                 ---------------------------\
+                 9051914041544843365972754266",
+            ))
             .body(body)
             .cookie(Cookie::new(CSRF_COOKIE_NAME, cookie))
             .dispatch();
@@ -625,16 +676,26 @@ How are you?
 
     #[test]
     fn test_token_insertion() {
-        let rocket = default_rocket(default_builder()
-                                    .set_auto_insert_disable_prefix(vec!["/static".to_owned()])
-                                    .finalize().unwrap());
+        let rocket = default_rocket(
+            default_builder()
+                .set_auto_insert_disable_prefix(vec!["/static".to_owned()])
+                .finalize()
+                .unwrap(),
+        );
         let client = Client::new(rocket).expect("valid rocket instance");
 
-        let mut response = client.get("/").dispatch();//token well inserted
-        assert!(response.body_string().unwrap().len() > "<div><form></form></div>".len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"\"/>".len());
+        let mut response = client.get("/").dispatch(); //token well inserted
+        assert!(
+            response.body_string().unwrap().len()
+                > "<div><form></form></div>".len()
+                    + "<input type=\"hidden\" name=\"csrf-token\" value=\"\"/>".len()
+        );
 
-        let mut response = client.get("/static/something").dispatch();//url well ignored by token inserter
-        assert_eq!(response.body_string(), Some("<div><form></form></div>".to_owned()));
+        let mut response = client.get("/static/something").dispatch(); //url well ignored by token inserter
+        assert_eq!(
+            response.body_string(),
+            Some("<div><form></form></div>".to_owned())
+        );
     }
 
     #[test]
@@ -642,25 +703,39 @@ How are you?
         let rocket = default_rocket(default_builder().set_auto_insert(false).finalize().unwrap());
         let client = Client::new(rocket).expect("valid rocket instance");
 
-
         let mut response = client.get("/").dispatch();
-        assert_eq!(response.body_string(), Some("<div><form></form></div>".to_owned()));
+        assert_eq!(
+            response.body_string(),
+            Some("<div><form></form></div>".to_owned())
+        );
     }
 
     #[test]
     fn test_auto_insert_stream() {
-        let rocket = default_rocket(default_builder().set_auto_insert_max_chunk_size(1).finalize().unwrap());
+        let rocket = default_rocket(
+            default_builder()
+                .set_auto_insert_max_chunk_size(1)
+                .finalize()
+                .unwrap(),
+        );
         let client = Client::new(rocket).expect("valid rocket instance");
 
-        let mut response = client.get("/").dispatch();//token well inserted
-        assert!(response.body_string().unwrap().len() > "<div><form></form></div>".len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"\"/>".len());
+        let mut response = client.get("/").dispatch(); //token well inserted
+        assert!(
+            response.body_string().unwrap().len()
+                > "<div><form></form></div>".len()
+                    + "<input type=\"hidden\" name=\"csrf-token\" value=\"\"/>".len()
+        );
 
         //TODO test stream body
     }
 
     #[test]
     fn test_key_from_env() {
-        env::set_var("ROCKET_SECRET_KEY", "BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+        env::set_var(
+            "ROCKET_SECRET_KEY",
+            "BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        );
 
         let rocket1 = default_rocket(default_builder().finalize().unwrap());
         let client1 = Client::new(rocket1).expect("valid rocket instance");
@@ -671,20 +746,34 @@ How are you?
         let (token2, cookie2) = get_token(&client2);
 
         //client 1 and 2 should be compatible
-        let mut response = post_token(&client1, "/".to_owned(), token2.clone(), cookie2.clone()).dispatch();
+        let mut response =
+            post_token(&client1, "/".to_owned(), token2.clone(), cookie2.clone()).dispatch();
         assert_eq!(response.body_string(), Some("success".to_owned()));
     }
 
     #[test]
     fn test_invalid_default_target() {
-        assert!(default_builder().set_default_target("/<invalid>".to_owned(), Method::Get).finalize().is_err());
-        assert!(default_builder().set_default_target("/<uri>".to_owned(), Method::Get).finalize().is_ok());
+        assert!(
+            default_builder()
+                .set_default_target("/<invalid>".to_owned(), Method::Get)
+                .finalize()
+                .is_err()
+        );
+        assert!(
+            default_builder()
+                .set_default_target("/<uri>".to_owned(), Method::Get)
+                .finalize()
+                .is_ok()
+        );
     }
 
     //Routes for above test
     #[get("/")]
     fn index() -> ::rocket::response::content::Content<&'static str> {
-        ::rocket::response::content::Content(::rocket::http::ContentType::HTML,"<div><form></form></div>")
+        ::rocket::response::content::Content(
+            ::rocket::http::ContentType::HTML,
+            "<div><form></form></div>",
+        )
     }
 
     #[post("/")]
@@ -693,7 +782,7 @@ How are you?
     }
 
     #[get("/token")]
-    fn token(t: CsrfToken) ->  String{
+    fn token(t: CsrfToken) -> String {
         ::std::str::from_utf8(t.value()).unwrap().to_owned()
     }
 
@@ -729,6 +818,9 @@ How are you?
 
     #[get("/static/something")]
     fn static_route() -> ::rocket::response::content::Content<&'static str> {
-        ::rocket::response::content::Content(::rocket::http::ContentType::HTML,"<div><form></form></div>")
+        ::rocket::response::content::Content(
+            ::rocket::http::ContentType::HTML,
+            "<div><form></form></div>",
+        )
     }
 }
