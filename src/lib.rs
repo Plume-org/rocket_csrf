@@ -1,6 +1,8 @@
 #![deny(missing_docs)]
 #![cfg_attr(feature = "cargo-clippy", deny(warnings))]
 #![feature(const_str_as_bytes)]
+#![feature(attr_literals, custom_attribute,plugin,decl_macro)]//only required for tests but
+#![plugin(rocket_codegen)]
 //! # Rocket Csrf
 //!
 //! A crate to protect you application against csrf.
@@ -45,7 +47,7 @@
 extern crate csrf;
 extern crate data_encoding;
 extern crate rand;
-extern crate rocket;
+extern crate rocket;//import rocket with macro only if in test, else import without
 extern crate serde;
 extern crate time;
 

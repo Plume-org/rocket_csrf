@@ -1,5 +1,5 @@
 use csrf::{AesGcmCsrfProtection, CsrfProtection, CSRF_COOKIE_NAME};
-use data_encoding::{BASE64, BASE64URL_NOPAD};
+use data_encoding::BASE64URL_NOPAD;
 use rocket::http::{Cookie, Status};
 use rocket::outcome::Outcome;
 use rocket::request::{self, FromRequest};
@@ -47,7 +47,7 @@ impl<'a, 'r> FromRequest<'a, 'r> for CsrfToken {
         let mut cookies = request.cookies();
         let token_value = cookies
             .get(CSRF_COOKIE_NAME)
-            .and_then(|cookie| BASE64.decode(cookie.value().as_bytes()).ok())
+            .and_then(|cookie| BASE64URL_NOPAD.decode(cookie.value().as_bytes()).ok())
             .and_then(|cookie| csrf_engine.parse_cookie(&cookie).ok())
             .and_then(|cookie| {
                 let value = cookie.value();
@@ -62,7 +62,7 @@ impl<'a, 'r> FromRequest<'a, 'r> for CsrfToken {
 
         match csrf_engine.generate_token_pair(token_value.as_ref(), *duration) {
             Ok((token, cookie)) => {
-                let mut c = Cookie::new(CSRF_COOKIE_NAME, cookie.b64_string());
+                let mut c = Cookie::new(CSRF_COOKIE_NAME, BASE64URL_NOPAD.encode(cookie.value()));
                 c.set_http_only(true);
                 c.set_max_age(Duration::seconds(*duration));
                 cookies.add(c); //TODO add a same_site and secure to the cookie
