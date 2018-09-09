@@ -113,9 +113,9 @@ impl<'a> Read for CsrfProxy<'a> {
                 }
             } else {
                 let offset = self.buf.read(buf);
-                let unparsed_len = self.unparsed.len();
+                let unparsed_len = cmp::min(buf.len() - offset, self.unparsed.len());
                 buf[offset..offset + unparsed_len].copy_from_slice(&self.unparsed);
-                self.unparsed.clear();
+                self.unparsed = self.unparsed[unparsed_len..].to_vec();
                 return Ok(unparsed_len + offset);
             };
 
