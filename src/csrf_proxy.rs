@@ -57,7 +57,7 @@ impl Default for Buffer {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,PartialEq,Eq)]
 enum ParseState {
     Init,                    //default state
     PartialFormMatch,        //when parsing "<form"
@@ -100,7 +100,7 @@ impl<'a> CsrfProxy<'a> {
 impl<'a> Read for CsrfProxy<'a> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         while self.buf.len() < buf.len() && !(self.eof && self.unparsed.is_empty()) {
-            let len = if !self.eof {
+            let len = if !self.eof || self.state == Init {
                 let unparsed_len = self.unparsed.len();
                 self.unparsed.resize(4096, 0);
                 unparsed_len + match self.underlying.read(&mut self.unparsed[unparsed_len..]) {
