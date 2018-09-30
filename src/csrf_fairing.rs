@@ -3,7 +3,7 @@ use data_encoding::{BASE64, BASE64URL_NOPAD};
 use rand::prelude::thread_rng;
 use rand::Rng;
 use rocket::fairing::{Fairing, Info, Kind};
-use rocket::http::uri::{Uri, Origin};
+use rocket::http::uri::{Origin, Uri};
 use rocket::http::Method::{self, *};
 use rocket::outcome::Outcome;
 use rocket::response::Body::Sized;
@@ -400,7 +400,9 @@ impl Fairing for CsrfFairing {
         let token = match request.guard::<CsrfToken>() {
             Outcome::Success(t) => t,
             _ => return,
-        }; //if we can't get a token, leave request unchanged, we can't do anything anyway
+        }; /* if we can't get a token, leave request unchanged, this probably
+            * means the request had no cookies from the begining
+            */
 
         let body = response.take_body(); //take request body from Rocket
         if body.is_none() {
@@ -434,7 +436,9 @@ mod tests {
     use super::*;
     use csrf::{CSRF_COOKIE_NAME, CSRF_FORM_FIELD};
     use rocket::{
-        http::{Cookie, Header, Method}, local::{Client, LocalRequest}, Rocket,
+        http::{Cookie, Header, Method},
+        local::{Client, LocalRequest},
+        Rocket,
     };
 
     fn default_builder() -> CsrfFairingBuilder {
@@ -473,7 +477,10 @@ mod tests {
     }
 
     fn get_token(client: &Client) -> (String, String) {
-        let mut response = client.get("/token").dispatch(); //get token and cookie
+        let mut response = client
+            .get("/token")
+            .cookie(Cookie::new("some", "cookie"))
+            .dispatch(); //get token and cookie
         let token = response.body_string().unwrap();
         let cookie = response
             .headers()
@@ -689,14 +696,20 @@ How are you?
         );
         let client = Client::new(rocket).expect("valid rocket instance");
 
-        let mut response = client.get("/").dispatch(); //token well inserted
+        let mut response = client
+            .get("/")
+            .cookie(Cookie::new("some", "cookie"))
+            .dispatch(); //token well inserted
         assert!(
             response.body_string().unwrap().len()
                 > "<div><form></form></div>".len()
                     + "<input type=\"hidden\" name=\"csrf-token\" value=\"\"/>".len()
         );
 
-        let mut response = client.get("/static/something").dispatch(); //url well ignored by token inserter
+        let mut response = client
+            .get("/static/something")
+            .cookie(Cookie::new("some", "cookie"))
+            .dispatch(); //url well ignored by token inserter
         assert_eq!(
             response.body_string(),
             Some("<div><form></form></div>".to_owned())
@@ -708,7 +721,10 @@ How are you?
         let rocket = default_rocket(default_builder().set_auto_insert(false).finalize().unwrap());
         let client = Client::new(rocket).expect("valid rocket instance");
 
-        let mut response = client.get("/").dispatch();
+        let mut response = client
+            .get("/")
+            .cookie(Cookie::new("some", "cookie"))
+            .dispatch();
         assert_eq!(
             response.body_string(),
             Some("<div><form></form></div>".to_owned())
@@ -725,7 +741,10 @@ How are you?
         );
         let client = Client::new(rocket).expect("valid rocket instance");
 
-        let mut response = client.get("/").dispatch(); //token well inserted
+        let mut response = client
+            .get("/")
+            .cookie(Cookie::new("some", "cookie"))
+            .dispatch(); //token well inserted
         assert!(
             response.body_string().unwrap().len()
                 > "<div><form></form></div>".len()
@@ -770,6 +789,29 @@ How are you?
                 .finalize()
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn test_insert_only_on_session() {
+        let rocket = default_rocket(default_builder().finalize().unwrap());
+        let client = Client::new(rocket).expect("valid rocket instance");
+
+        let mut response = client.get("/").dispatch();
+        assert_eq!(response.body_string().unwrap(), "<div><form></form></div>");
+        assert!(response.headers().get("set-cookie").next().is_none()); // nothing inserted if no session detected
+
+        let mut response = client
+            .get("/")
+            .cookie(Cookie::new(CSRF_COOKIE_NAME, ""))
+            .dispatch();
+        assert_eq!(response.body_string().unwrap(), "<div><form></form></div>");
+        assert!(
+            response
+                .headers()
+                .get_one("set-cookie")
+                .unwrap()
+                .contains("Max-Age=0;")
+        ) // delete cookie if no longer in session
     }
 
     //Routes for above test

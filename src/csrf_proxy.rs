@@ -57,7 +57,7 @@ impl Default for Buffer {
     }
 }
 
-#[derive(Debug,PartialEq,Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum ParseState {
     Init,                    //default state
     PartialFormMatch,        //when parsing "<form"
