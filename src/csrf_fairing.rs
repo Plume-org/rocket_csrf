@@ -3,6 +3,7 @@ use data_encoding::{BASE64, BASE64URL_NOPAD};
 use rand::prelude::thread_rng;
 use rand::Rng;
 use rocket::fairing::{Fairing, Info, Kind};
+use rocket::http::Cookie;
 use rocket::http::uri::{Origin, Uri};
 use rocket::http::Method::{self, *};
 use rocket::outcome::Outcome;
@@ -12,6 +13,7 @@ use std::collections::HashMap;
 use std::env;
 use std::io::{Cursor, Read};
 use std::str::from_utf8;
+use time::Duration;
 
 use csrf_proxy::CsrfProxy;
 use csrf_token::CsrfToken;
@@ -302,7 +304,6 @@ impl Fairing for CsrfFairing {
     fn on_request(&self, request: &mut Request, data: &Data) {
         match request.method() {
             Get | Head | Connect | Options => {
-                let _ = request.guard::<CsrfToken>(); //force regeneration of csrf cookies
                 return;
             }
             _ => {}
@@ -318,8 +319,6 @@ impl Fairing for CsrfFairing {
             .get(CSRF_COOKIE_NAME)
             .and_then(|cookie| BASE64URL_NOPAD.decode(cookie.value().as_bytes()).ok())
             .and_then(|cookie| csrf_engine.parse_cookie(&cookie).ok()); //get and parse Csrf cookie
-
-        let _ = request.guard::<CsrfToken>(); //force regeneration of csrf cookies
 
         let token = if request
             .content_type()
@@ -398,8 +397,19 @@ impl Fairing for CsrfFairing {
         } //if request is on an ignored prefix, ignore it
 
         let token = match request.guard::<CsrfToken>() {
-            Outcome::Success(t) => t,
-            _ => return,
+            Outcome::Success(t) => {
+                response.adjoin_header(request.cookies().get(CSRF_COOKIE_NAME).unwrap());
+                t
+            },//guard can't add/remove cookies in on_response, add headers manually
+            Outcome::Forward(_) => {
+                if request.cookies().get(CSRF_COOKIE_NAME).is_some() {
+                    response.adjoin_header(&Cookie::build(CSRF_COOKIE_NAME, "")
+                                        .max_age(Duration::zero())
+                                       .finish());
+                }
+                return
+            },//guard can't add/remove cookies in on_response, add headers manually
+            Outcome::Failure(_) => return,
         }; /* if we can't get a token, leave request unchanged, this probably
             * means the request had no cookies from the begining
             */
@@ -810,7 +820,7 @@ How are you?
                 .headers()
                 .get_one("set-cookie")
                 .unwrap()
-                .contains("Max-Age=0;")
+                .contains("Max-Age=0")
         ) // delete cookie if no longer in session
     }
 
