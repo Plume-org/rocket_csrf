@@ -45,8 +45,9 @@ impl<'a, 'r> FromRequest<'a, 'r> for CsrfToken {
             .inner();
 
         let mut cookies = request.cookies();
-        if cookies.iter().count() == 0 ||
-            cookies.iter().count() == 1 && cookies.get(CSRF_COOKIE_NAME).is_some(){
+        if cookies.iter().count() == 0
+            || cookies.iter().count() == 1 && cookies.get(CSRF_COOKIE_NAME).is_some()
+        {
             Outcome::Forward(())
         } else {
             let token_value = cookies

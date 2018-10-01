@@ -3,8 +3,8 @@ use data_encoding::{BASE64, BASE64URL_NOPAD};
 use rand::prelude::thread_rng;
 use rand::Rng;
 use rocket::fairing::{Fairing, Info, Kind};
-use rocket::http::Cookie;
 use rocket::http::uri::{Origin, Uri};
+use rocket::http::Cookie;
 use rocket::http::Method::{self, *};
 use rocket::outcome::Outcome;
 use rocket::response::Body::Sized;
@@ -400,15 +400,17 @@ impl Fairing for CsrfFairing {
             Outcome::Success(t) => {
                 response.adjoin_header(request.cookies().get(CSRF_COOKIE_NAME).unwrap());
                 t
-            },//guard can't add/remove cookies in on_response, add headers manually
+            } //guard can't add/remove cookies in on_response, add headers manually
             Outcome::Forward(_) => {
                 if request.cookies().get(CSRF_COOKIE_NAME).is_some() {
-                    response.adjoin_header(&Cookie::build(CSRF_COOKIE_NAME, "")
-                                        .max_age(Duration::zero())
-                                       .finish());
+                    response.adjoin_header(
+                        &Cookie::build(CSRF_COOKIE_NAME, "")
+                            .max_age(Duration::zero())
+                            .finish(),
+                    );
                 }
-                return
-            },//guard can't add/remove cookies in on_response, add headers manually
+                return;
+            } //guard can't add/remove cookies in on_response, add headers manually
             Outcome::Failure(_) => return,
         }; /* if we can't get a token, leave request unchanged, this probably
             * means the request had no cookies from the begining
