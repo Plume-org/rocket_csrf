@@ -262,6 +262,20 @@ mod tests {
     use csrf_proxy::{Buffer, CsrfProxy};
     use std::io::{Cursor, Read};
 
+    macro_rules! must_finish {
+        ($($func:expr);*) => {{
+            use std::{sync::mpsc, thread, time::Duration};
+            let (tx,rx) = mpsc::channel();
+            thread::spawn(move || {
+                let _ = tx.send({
+                    $($func);*
+                });
+            });
+            rx.recv_timeout(Duration::from_secs(1))
+                .expect("expression did not finish exectution in time")
+        }};
+    }
+
     #[test]
     fn test_buffer_size() {
         let mut buffer = Buffer::new();
@@ -312,7 +326,8 @@ mod tests {
 
     #[test]
     fn test_proxy_identity() {
-        let data = "<!DOCTYPE html>
+        must_finish!{{
+            let data = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -322,16 +337,18 @@ mod tests {
   </body>
 </html>"
             .as_bytes();
-        let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
-        let mut pr_data = Vec::new();
-        let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(read.unwrap(), data.len());
-        assert_eq!(&pr_data, &data)
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+            let mut pr_data = Vec::new();
+            let read = proxy.read_to_end(&mut pr_data);
+            assert_eq!(read.unwrap(), data.len());
+            assert_eq!(&pr_data, &data)
+        }}
     }
 
     #[test]
     fn test_token_insertion_empty_form() {
-        let data = "<!DOCTYPE html>
+        must_finish!{{
+            let data = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -344,8 +361,8 @@ mod tests {
      </form>
   </body>
 </html>"
-            .as_bytes();
-        let expected = "<!DOCTYPE html>
+                .as_bytes();
+            let expected = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -358,20 +375,22 @@ mod tests {
      <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/></form>
   </body>
 </html>"
-            .as_bytes();
-        let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
-        let mut pr_data = Vec::new();
-        let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(
-            read.unwrap(),
-            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
-        );
-        assert_eq!(&pr_data, &expected)
+                .as_bytes();
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+            let mut pr_data = Vec::new();
+            let read = proxy.read_to_end(&mut pr_data);
+            assert_eq!(
+                read.unwrap(),
+                data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+            );
+            assert_eq!(&pr_data, &expected)
+        }}
     }
 
     #[test]
     fn test_token_insertion() {
-        let data = "<!DOCTYPE html>
+        must_finish!{{
+           let data = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -382,8 +401,8 @@ mod tests {
      </form>
   </body>
 </html>"
-            .as_bytes();
-        let expected = "<!DOCTYPE html>
+                .as_bytes();
+            let expected = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -394,20 +413,22 @@ mod tests {
      </form>
   </body>
 </html>"
-            .as_bytes();
-        let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
-        let mut pr_data = Vec::new();
-        let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(
-            read.unwrap(),
-            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
-        );
-        assert_eq!(&pr_data, &expected)
-    }
+                .as_bytes();
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+            let mut pr_data = Vec::new();
+            let read = proxy.read_to_end(&mut pr_data);
+            assert_eq!(
+                read.unwrap(),
+                data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+            );
+            assert_eq!(&pr_data, &expected)
+        }
+    }}
 
     #[test]
     fn test_token_insertion_with_method() {
-        let data = "<!DOCTYPE html>
+        must_finish!{{
+            let data = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -418,8 +439,8 @@ mod tests {
      </form>
   </body>
 </html>"
-            .as_bytes();
-        let expected = "<!DOCTYPE html>
+                .as_bytes();
+            let expected = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -430,16 +451,16 @@ mod tests {
      </form>
   </body>
 </html>"
-            .as_bytes();
-        let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
-        let mut pr_data = Vec::new();
-        let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(
-            read.unwrap(),
-            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
-        );
-        assert_eq!(&pr_data, &expected);
-        let data = "<!DOCTYPE html>
+                .as_bytes();
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+            let mut pr_data = Vec::new();
+            let read = proxy.read_to_end(&mut pr_data);
+            assert_eq!(
+                read.unwrap(),
+                data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+            );
+            assert_eq!(&pr_data, &expected);
+            let data = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -450,8 +471,8 @@ mod tests {
      </form>
   </body>
 </html>"
-            .as_bytes();
-        let expected = "<!DOCTYPE html>
+                .as_bytes();
+            let expected = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -463,14 +484,15 @@ mod tests {
   </body>
 </html>"
             .as_bytes();
-        let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
-        pr_data.clear();
-        let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(
-            read.unwrap(),
-            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
-        );
-        assert_eq!(&pr_data, &expected)
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+            let mut pr_data = Vec::new();
+            let read = proxy.read_to_end(&mut pr_data);
+            assert_eq!(
+                read.unwrap(),
+                data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+            );
+            assert_eq!(&pr_data, &expected)
+        }}
     }
 
     struct ErrorReader {}
@@ -483,14 +505,16 @@ mod tests {
 
     #[test]
     fn test_relay_error() {
-        let buf = &mut [0; 1];
-        let err = ErrorReader {};
-        let mut proxy_err = CsrfProxy::from(Box::new(err), &[0]);
-        let read = proxy_err.read(buf).unwrap_err();
-        assert_eq!(
-            read.kind(),
-            ::std::io::Error::new(::std::io::ErrorKind::Other, "").kind()
-        );
+        must_finish!{{
+            let buf = &mut [0; 1];
+            let err = ErrorReader {};
+            let mut proxy_err = CsrfProxy::from(Box::new(err), &[0]);
+            let read = proxy_err.read(buf).unwrap_err();
+            assert_eq!(
+                read.kind(),
+                ::std::io::Error::new(::std::io::ErrorKind::Other, "").kind()
+            );
+        }}
     }
 
     struct SlowReader<'a> {
@@ -512,7 +536,8 @@ mod tests {
     #[test]
     fn test_difficult_cut() {
         //this basically re-test the parser, using short reads so it encounter rare code paths
-        let data = "<!DOCTYPE html>
+        must_finish!{{
+            let data = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -525,8 +550,8 @@ mod tests {
      </form>
   </body>
 </html>"
-            .as_bytes();
-        let expected = "<!DOCTYPE html>
+                .as_bytes();
+            let expected = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -539,17 +564,18 @@ mod tests {
      <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/></form>
   </body>
 </html>"
-            .as_bytes();
-        let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
-        let mut pr_data = Vec::new();
-        let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(
-            read.unwrap(),
-            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
-        );
-        assert_eq!(&pr_data, &expected);
-
-        let data = "<!DOCTYPE html>
+                .as_bytes();
+            let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
+            let mut pr_data = Vec::new();
+            let read = proxy.read_to_end(&mut pr_data);
+            assert_eq!(
+                read.unwrap(),
+                data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+            );
+            assert_eq!(&pr_data, &expected);
+        }}
+        must_finish!{{
+            let data = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -560,8 +586,8 @@ mod tests {
      </form>
   </body>
 </html>"
-            .as_bytes();
-        let expected = "<!DOCTYPE html>
+                .as_bytes();
+            let expected = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -572,17 +598,18 @@ mod tests {
      </form>
   </body>
 </html>"
-            .as_bytes();
-        let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
-        let mut pr_data = Vec::new();
-        let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(
-            read.unwrap(),
-            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
-        );
-        assert_eq!(&pr_data, &expected);
-
-        let data = "<!DOCTYPE html>
+                .as_bytes();
+            let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
+            let mut pr_data = Vec::new();
+            let read = proxy.read_to_end(&mut pr_data);
+            assert_eq!(
+                read.unwrap(),
+                data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+            );
+            assert_eq!(&pr_data, &expected);
+        }}
+        must_finish!{{
+            let data = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -593,8 +620,8 @@ mod tests {
      </form>
   </body>
 </html>"
-            .as_bytes();
-        let expected = "<!DOCTYPE html>
+                .as_bytes();
+            let expected = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -605,17 +632,18 @@ mod tests {
      </form>
   </body>
 </html>"
-            .as_bytes();
-        let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
-        pr_data.clear();
-        let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(
-            read.unwrap(),
-            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
-        );
-        assert_eq!(&pr_data, &expected);
-
-        let data = "<!DOCTYPE html>
+                .as_bytes();
+            let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
+            let mut pr_data = Vec::new();
+            let read = proxy.read_to_end(&mut pr_data);
+            assert_eq!(
+                read.unwrap(),
+                data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+            );
+            assert_eq!(&pr_data, &expected);
+        }}
+        must_finish!{{
+            let data = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -626,8 +654,8 @@ mod tests {
      </form>
   </body>
 </html>"
-            .as_bytes();
-        let expected = "<!DOCTYPE html>
+                .as_bytes();
+            let expected = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -638,20 +666,22 @@ mod tests {
      </form>
   </body>
 </html>"
-            .as_bytes();
-        let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
-        let mut pr_data = Vec::new();
-        let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(
-            read.unwrap(),
-            data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
-        );
-        assert_eq!(&pr_data, &expected)
+                .as_bytes();
+            let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
+            let mut pr_data = Vec::new();
+            let read = proxy.read_to_end(&mut pr_data);
+            assert_eq!(
+                read.unwrap(),
+                data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
+            );
+            assert_eq!(&pr_data, &expected)
+        }}
     }
 
     #[test]
     fn test_eof() {
-        let data = "<!DOCTYPE html>
+        must_finish!{{
+            let data = "<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -661,12 +691,13 @@ mod tests {
         <p>
           some text
         </p>"
-            .as_bytes();
+                .as_bytes();
 
-        let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
-        let mut pr_data = Vec::new();
-        let read = proxy.read_to_end(&mut pr_data);
-        assert_eq!(read.unwrap(), data.len());
-        assert_eq!(&pr_data, &data)
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+            let mut pr_data = Vec::new();
+            let read = proxy.read_to_end(&mut pr_data);
+            assert_eq!(read.unwrap(), data.len());
+            assert_eq!(&pr_data, &data)
+        }}
     }
 }
