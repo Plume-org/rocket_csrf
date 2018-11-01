@@ -1,10 +1,10 @@
-use csrf::{AesGcmCsrfProtection, CsrfProtection,
-        CSRF_COOKIE_NAME, CSRF_FORM_FIELD};
+use csrf::{AesGcmCsrfProtection, CsrfProtection, CSRF_COOKIE_NAME, CSRF_FORM_FIELD};
 use data_encoding::{BASE64, BASE64URL_NOPAD};
 use rand::prelude::thread_rng;
 use rand::Rng;
 use rocket::fairing::{Fairing, Info, Kind};
-use rocket::http::uri::URI as Uri;
+use rocket::http::uri::{Origin, Uri};
+use rocket::http::Cookie;
 use rocket::http::Method::{self, *};
 use rocket::outcome::Outcome;
 use rocket::response::Body::Sized;
@@ -13,12 +13,15 @@ use std::collections::HashMap;
 use std::env;
 use std::io::{Cursor, Read};
 use std::str::from_utf8;
+use time::Duration;
 
 use csrf_proxy::CsrfProxy;
 use csrf_token::CsrfToken;
 use path::Path;
 use utils::parse_args;
 
+const CSRF_FORM_FIELD_MULTIPART: &[u8] =
+    "Content-Disposition: form-data; name=\"csrf-token\"".as_bytes();
 
 /// Builder for [CsrfFairing](struct.CsrfFairing.html)
 ///
@@ -301,7 +304,6 @@ impl Fairing for CsrfFairing {
     fn on_request(&self, request: &mut Request, data: &Data) {
         match request.method() {
             Get | Head | Connect | Options => {
-                let _ = request.guard::<CsrfToken>(); //force regeneration of csrf cookies
                 return;
             }
             _ => {}
@@ -315,16 +317,33 @@ impl Fairing for CsrfFairing {
         let cookie = request
             .cookies()
             .get(CSRF_COOKIE_NAME)
-            .and_then(|cookie| BASE64.decode(cookie.value().as_bytes()).ok())
+            .and_then(|cookie| BASE64URL_NOPAD.decode(cookie.value().as_bytes()).ok())
             .and_then(|cookie| csrf_engine.parse_cookie(&cookie).ok()); //get and parse Csrf cookie
 
-        let _ = request.guard::<CsrfToken>(); //force regeneration of csrf cookies
-
-        let token = parse_args(from_utf8(data.peek()).unwrap_or(""))
-            .filter(|(key, _)| key == &CSRF_FORM_FIELD)
-            .filter_map(|(_, token)| BASE64URL_NOPAD.decode(&token.as_bytes()).ok())
-            .filter_map(|token| csrf_engine.parse_token(&token).ok())
-            .next(); //get and parse Csrf token
+        let token = if request
+            .content_type()
+            .map(|c| c.media_type())
+            .filter(|m| m.top() == "multipart" && m.sub() == "form-data")
+            .is_some()
+        {
+            data.peek().split(|&c| c==0x0A || c==0x0D)//0x0A=='\n', 0x0D=='\r'
+                .filter(|l| l.len() > 0)
+                .skip_while(|&l| l != CSRF_FORM_FIELD_MULTIPART && l != &CSRF_FORM_FIELD_MULTIPART[..CSRF_FORM_FIELD_MULTIPART.len()-2])
+                .skip(1)
+                .map(|token| token.split(|&c| c==10 || c==13).next())
+                .next().unwrap_or(None)
+        } else {
+            parse_args(from_utf8(data.peek()).unwrap_or(""))
+                .filter_map(|(key, token)| {
+                    if key == CSRF_FORM_FIELD {
+                        Some(token.as_bytes())
+                    } else {
+                        None
+                    }
+                })
+                .next()
+        }.and_then(|token| BASE64URL_NOPAD.decode(&token).ok())
+            .and_then(|token| csrf_engine.parse_token(&token).ok());
 
         if let Some(token) = token {
             if let Some(cookie) = cookie {
@@ -339,9 +358,11 @@ impl Fairing for CsrfFairing {
         for (src, dst, method) in &self.exceptions {
             if let Some(param) = src.extract(&request.uri().to_string()) {
                 if let Some(destination) = dst.map(&param) {
-                    request.set_uri(destination);
-                    request.set_method(*method);
-                    return;
+                    if let Ok(origin) = Origin::parse_owned(destination) {
+                        request.set_uri(origin);
+                        request.set_method(*method);
+                        return;
+                    }
                 }
             }
         }
@@ -352,7 +373,10 @@ impl Fairing for CsrfFairing {
         let uri = Uri::percent_encode(&uri);
         let mut param: HashMap<&str, String> = HashMap::new();
         param.insert("uri", uri.to_string());
-        request.set_uri(self.default_target.0.map(&param).unwrap());
+        let destination = self.default_target.0.map(&param).unwrap();
+        let origin = Origin::parse_owned(destination).unwrap();
+
+        request.set_uri(origin);
         request.set_method(self.default_target.1)
     }
 
@@ -373,9 +397,24 @@ impl Fairing for CsrfFairing {
         } //if request is on an ignored prefix, ignore it
 
         let token = match request.guard::<CsrfToken>() {
-            Outcome::Success(t) => t,
-            _ => return,
-        }; //if we can't get a token, leave request unchanged, we can't do anything anyway
+            Outcome::Success(t) => {
+                response.adjoin_header(request.cookies().get(CSRF_COOKIE_NAME).unwrap());
+                t
+            } //guard can't add/remove cookies in on_response, add headers manually
+            Outcome::Forward(_) => {
+                if request.cookies().get(CSRF_COOKIE_NAME).is_some() {
+                    response.adjoin_header(
+                        &Cookie::build(CSRF_COOKIE_NAME, "")
+                            .max_age(Duration::zero())
+                            .finish(),
+                    );
+                }
+                return;
+            } //guard can't add/remove cookies in on_response, add headers manually
+            Outcome::Failure(_) => return,
+        }; /* if we can't get a token, leave request unchanged, this probably
+            * means the request had no cookies from the begining
+            */
 
         let body = response.take_body(); //take request body from Rocket
         if body.is_none() {
@@ -387,19 +426,460 @@ impl Fairing for CsrfFairing {
             if len <= self.auto_insert_max_size {
                 //if this is a small enought body, process the full body
                 let mut res = Vec::with_capacity(len as usize);
-                CsrfProxy::from(body_reader, &token)
+                CsrfProxy::from(body_reader, &token.value())
                     .read_to_end(&mut res)
                     .unwrap();
                 response.set_sized_body(Cursor::new(res));
             } else {
                 //if body is of known but long size, change it to a stream to preserve memory, by encapsulating it into our "proxy" struct
                 let body = body_reader;
-                response.set_streamed_body(Box::new(CsrfProxy::from(body, &token)));
+                response.set_streamed_body(Box::new(CsrfProxy::from(body, &token.value())));
             }
         } else {
             //if body is of unknown size, encapsulate it into our "proxy" struct
             let body = body.into_inner();
-            response.set_streamed_body(Box::new(CsrfProxy::from(body, &token)));
+            response.set_streamed_body(Box::new(CsrfProxy::from(body, &token.value())));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use csrf::{CSRF_COOKIE_NAME, CSRF_FORM_FIELD};
+    use rocket::{
+        http::{Cookie, Header, Method},
+        local::{Client, LocalRequest},
+        Rocket,
+    };
+
+    fn default_builder() -> CsrfFairingBuilder {
+        super::CsrfFairingBuilder::new()
+            .set_default_target("/csrf".to_owned(), Method::Get)
+            .set_exceptions(vec![(
+                "/ex1".to_owned(),
+                "/ex1-target".to_owned(),
+                Method::Post,
+            )])
+            .add_exceptions(vec![(
+                "/ex2/<dyn>".to_owned(),
+                "/ex2-target/<dyn>".to_owned(),
+                Method::Get,
+            )])
+    }
+
+    fn default_rocket(csrf_fairing: CsrfFairing) -> Rocket {
+        ::rocket::ignite()
+            .mount(
+                "/",
+                routes![
+                    index,
+                    post_index,
+                    token,
+                    csrf,
+                    get_ex1,
+                    post_ex1,
+                    target_ex1,
+                    post_ex2,
+                    target_ex2,
+                    static_route
+                ],
+            )
+            .attach(csrf_fairing)
+    }
+
+    fn get_token(client: &Client) -> (String, String) {
+        let mut response = client
+            .get("/token")
+            .cookie(Cookie::new("some", "cookie"))
+            .dispatch(); //get token and cookie
+        let token = response.body_string().unwrap();
+        let cookie = response
+            .headers()
+            .get("set-cookie")
+            .next()
+            .unwrap()
+            .split(|c| c == '=' || c == ';')
+            .nth(1)
+            .unwrap()
+            .to_owned();
+        (token, cookie)
+    }
+
+    fn post_token(client: &Client, path: String, token: String, cookie: String) -> LocalRequest {
+        let token = if token.len() > 0 {
+            let mut t = Vec::new();
+            t.append(&mut CSRF_FORM_FIELD.as_bytes().to_vec());
+            t.push(0x3D); //'='
+            t.append(&mut token.as_bytes().to_vec());
+            t
+        } else {
+            Vec::new()
+        };
+        let req = client.post(path).body(&token);
+        if cookie.len() > 0 {
+            req.cookie(Cookie::new(CSRF_COOKIE_NAME, cookie))
+        } else {
+            req
+        }
+    }
+
+    #[test]
+    fn test_redirection_on_failure() {
+        let rocket = default_rocket(default_builder().finalize().unwrap());
+        let client = Client::new(rocket).expect("valid rocket instance");
+
+        let mut response = client.post("/").dispatch(); //violation well detected
+        assert_eq!(response.body_string(), Some("violation".to_owned()));
+
+        let mut response = client.post("/ex1").dispatch(); //redirection on post
+        assert_eq!(response.body_string(), Some("target-ex1".to_owned()));
+
+        let mut response = client.post("/ex2/abcd").dispatch(); //redirection with dyn part
+        assert_eq!(response.body_string(), Some("abcd".to_owned()));
+    }
+
+    #[test]
+    fn test_non_redirection() {
+        let rocket = default_rocket(default_builder().finalize().unwrap());
+        let client = Client::new(rocket).expect("valid rocket instance");
+
+        let mut response = client.get("/ex1").dispatch(); //no redirection on get
+        assert_eq!(response.body_string(), Some("get-ex1".to_owned()));
+
+        let (token, cookie) = get_token(&client);
+
+        let mut response =
+            post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).dispatch();
+        assert_eq!(response.body_string(), Some("success".to_owned()));
+
+        let mut response =
+            post_token(&client, "/ex1".to_owned(), token.clone(), cookie.clone()).dispatch();
+        assert_eq!(response.body_string(), Some("post-ex1".to_owned()));
+
+        let mut response = post_token(
+            &client,
+            "/ex2/some-url".to_owned(),
+            token.clone(),
+            cookie.clone(),
+        ).dispatch();
+        assert_eq!(response.body_string(), Some("valid-dyn-req".to_owned()));
+    }
+
+    #[test]
+    fn test_token_timeout() {
+        let rocket = default_rocket(default_builder().set_timeout(5).finalize().unwrap());
+        let client = Client::new(rocket).expect("valid rocket instance");
+
+        let (token, cookie) = get_token(&client);
+
+        let mut response =
+            post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).dispatch();
+        assert_eq!(response.body_string(), Some("success".to_owned()));
+        ::std::thread::sleep(::std::time::Duration::from_secs(6));
+
+        //access / with timed out token
+        let mut response =
+            post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).dispatch();
+        assert_eq!(response.body_string(), Some("violation".to_owned()));
+    }
+
+    #[test]
+    fn test_invalid_token_pair() {
+        let rocket1 = default_rocket(default_builder().set_secret([0; 32]).finalize().unwrap());
+        let client1 = Client::new(rocket1).expect("valid rocket instance");
+        let rocket2 = default_rocket(default_builder().set_secret([0; 32]).finalize().unwrap());
+        let client2 = Client::new(rocket2).expect("valid rocket instance");
+
+        let (token, cookie) = get_token(&client1);
+
+        //having only one part fail
+        let mut response =
+            post_token(&client2, "/".to_owned(), token.clone(), "".to_owned()).dispatch();
+        assert_eq!(response.body_string(), Some("violation".to_owned()));
+
+        let mut response =
+            post_token(&client1, "/".to_owned(), "".to_owned(), cookie.clone()).dispatch();
+        assert_eq!(response.body_string(), Some("violation".to_owned()));
+
+        let (token2, _cookie2) = get_token(&client2);
+
+        //having 2 incompatible parts fail
+        let mut response =
+            post_token(&client1, "/".to_owned(), token2.clone(), cookie.clone()).dispatch();
+        assert_eq!(response.body_string(), Some("violation".to_owned()));
+    }
+
+    #[test]
+    fn test_multiple_parametters() {
+        let rocket = default_rocket(default_builder().finalize().unwrap());
+        let client = Client::new(rocket).expect("valid rocket instance");
+
+        let (token, cookie) = get_token(&client);
+
+        let mut body = Vec::new();
+        body.append(&mut "key1=value1&".as_bytes().to_vec());
+        body.append(&mut CSRF_FORM_FIELD.as_bytes().to_vec());
+        body.push(0x3D); //'='
+        body.append(&mut token.as_bytes().to_vec());
+        body.append(&mut "&key2=value2".as_bytes().to_vec());
+        let mut response = client
+            .post("/")
+            .body(body)
+            .cookie(Cookie::new("something", "before"))
+            .cookie(Cookie::new(CSRF_COOKIE_NAME, cookie))
+            .cookie(Cookie::new("and", "after"))
+            .dispatch();
+
+        assert_eq!(response.body_string(), Some("success".to_owned()));
+    }
+
+    #[test]
+    fn test_multipart() {
+        let body_before = "-----------------------------9051914041544843365972754266
+Content-Disposition: form-data; name=\"something\"
+
+value
+-----------------------------9051914041544843365972754266
+Content-Disposition: form-data; name=\"";
+        let body_middle = "\"
+
+";
+        let body_after = "
+
+-----------------------------9051914041544843365972754266
+Content-Disposition: form-data; name=\"hey\"; filename=\"whatsup\"
+
+How are you?
+
+-----------------------------9051914041544843365972754266--";
+        let rocket = default_rocket(default_builder().finalize().unwrap());
+        let client = Client::new(rocket).expect("valid rocket instance");
+
+        let (token, cookie) = get_token(&client);
+
+        let mut body = Vec::new();
+        body.append(&mut body_before.as_bytes().to_vec());
+        body.append(&mut CSRF_FORM_FIELD.as_bytes().to_vec());
+        body.append(&mut body_middle.as_bytes().to_vec());
+        body.append(&mut token.as_bytes().to_vec());
+        body.append(&mut body_after.as_bytes().to_vec());
+        let mut response = client
+            .post("/")
+            .header(Header::new(
+                "Content-Type",
+                "multipart/form-data; boundary=\
+                 ---------------------------\
+                 9051914041544843365972754266",
+            ))
+            .body(body)
+            .cookie(Cookie::new(CSRF_COOKIE_NAME, cookie.clone()))
+            .dispatch();
+
+        assert_eq!(response.body_string(), Some("success".to_owned()));
+        let mut body = Vec::new();
+        body.append(&mut body_before.as_bytes().to_vec());
+        body.append(&mut CSRF_FORM_FIELD.as_bytes().to_vec());
+        body.append(&mut body_middle.as_bytes().to_vec());
+        body.append(&mut "not_a_token".as_bytes().to_vec());
+        body.append(&mut body_after.as_bytes().to_vec());
+        let mut response = client
+            .post("/")
+            .header(Header::new(
+                "Content-Type",
+                "multipart/form-data; boundary=\
+                 ---------------------------\
+                 9051914041544843365972754266",
+            ))
+            .body(body)
+            .cookie(Cookie::new(CSRF_COOKIE_NAME, cookie))
+            .dispatch();
+
+        assert_eq!(response.body_string(), Some("violation".to_owned()));
+    }
+
+    #[test]
+    fn test_token_insertion() {
+        let rocket = default_rocket(
+            default_builder()
+                .set_auto_insert_disable_prefix(vec!["/static".to_owned()])
+                .finalize()
+                .unwrap(),
+        );
+        let client = Client::new(rocket).expect("valid rocket instance");
+
+        let mut response = client
+            .get("/")
+            .cookie(Cookie::new("some", "cookie"))
+            .dispatch(); //token well inserted
+        assert!(
+            response.body_string().unwrap().len()
+                > "<div><form></form></div>".len()
+                    + "<input type=\"hidden\" name=\"csrf-token\" value=\"\"/>".len()
+        );
+
+        let mut response = client
+            .get("/static/something")
+            .cookie(Cookie::new("some", "cookie"))
+            .dispatch(); //url well ignored by token inserter
+        assert_eq!(
+            response.body_string(),
+            Some("<div><form></form></div>".to_owned())
+        );
+    }
+
+    #[test]
+    fn test_auto_insert_disabled() {
+        let rocket = default_rocket(default_builder().set_auto_insert(false).finalize().unwrap());
+        let client = Client::new(rocket).expect("valid rocket instance");
+
+        let mut response = client
+            .get("/")
+            .cookie(Cookie::new("some", "cookie"))
+            .dispatch();
+        assert_eq!(
+            response.body_string(),
+            Some("<div><form></form></div>".to_owned())
+        );
+    }
+
+    #[test]
+    fn test_auto_insert_stream() {
+        let rocket = default_rocket(
+            default_builder()
+                .set_auto_insert_max_chunk_size(1)
+                .finalize()
+                .unwrap(),
+        );
+        let client = Client::new(rocket).expect("valid rocket instance");
+
+        let mut response = client
+            .get("/")
+            .cookie(Cookie::new("some", "cookie"))
+            .dispatch(); //token well inserted
+        assert!(
+            response.body_string().unwrap().len()
+                > "<div><form></form></div>".len()
+                    + "<input type=\"hidden\" name=\"csrf-token\" value=\"\"/>".len()
+        );
+
+        //TODO test stream body
+    }
+
+    #[test]
+    fn test_key_from_env() {
+        env::set_var(
+            "ROCKET_SECRET_KEY",
+            "BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        );
+
+        let rocket1 = default_rocket(default_builder().finalize().unwrap());
+        let client1 = Client::new(rocket1).expect("valid rocket instance");
+        let rocket2 = default_rocket(default_builder().finalize().unwrap());
+        let client2 = Client::new(rocket2).expect("valid rocket instance");
+
+        let (_token, _cookie) = get_token(&client1);
+        let (token2, cookie2) = get_token(&client2);
+
+        //client 1 and 2 should be compatible
+        let mut response =
+            post_token(&client1, "/".to_owned(), token2.clone(), cookie2.clone()).dispatch();
+        assert_eq!(response.body_string(), Some("success".to_owned()));
+    }
+
+    #[test]
+    fn test_invalid_default_target() {
+        assert!(
+            default_builder()
+                .set_default_target("/<invalid>".to_owned(), Method::Get)
+                .finalize()
+                .is_err()
+        );
+        assert!(
+            default_builder()
+                .set_default_target("/<uri>".to_owned(), Method::Get)
+                .finalize()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_insert_only_on_session() {
+        let rocket = default_rocket(default_builder().finalize().unwrap());
+        let client = Client::new(rocket).expect("valid rocket instance");
+
+        let mut response = client.get("/").dispatch();
+        assert_eq!(response.body_string().unwrap(), "<div><form></form></div>");
+        assert!(response.headers().get("set-cookie").next().is_none()); // nothing inserted if no session detected
+
+        let mut response = client
+            .get("/")
+            .cookie(Cookie::new(CSRF_COOKIE_NAME, ""))
+            .dispatch();
+        assert_eq!(response.body_string().unwrap(), "<div><form></form></div>");
+        assert!(
+            response
+                .headers()
+                .get_one("set-cookie")
+                .unwrap()
+                .contains("Max-Age=0")
+        ) // delete cookie if no longer in session
+    }
+
+    //Routes for above test
+    #[get("/")]
+    fn index() -> ::rocket::response::content::Content<&'static str> {
+        ::rocket::response::content::Content(
+            ::rocket::http::ContentType::HTML,
+            "<div><form></form></div>",
+        )
+    }
+
+    #[post("/")]
+    fn post_index() -> &'static str {
+        "success"
+    }
+
+    #[get("/token")]
+    fn token(t: CsrfToken) -> String {
+        ::std::str::from_utf8(t.value()).unwrap().to_owned()
+    }
+
+    #[get("/csrf")]
+    fn csrf() -> &'static str {
+        "violation"
+    }
+
+    #[get("/ex1")]
+    fn get_ex1() -> &'static str {
+        "get-ex1"
+    }
+
+    #[post("/ex1")]
+    fn post_ex1() -> &'static str {
+        "post-ex1"
+    }
+
+    #[post("/ex1-target")]
+    fn target_ex1() -> &'static str {
+        "target-ex1"
+    }
+
+    #[post("/ex2/<_dyn>")]
+    fn post_ex2(_dyn: String) -> &'static str {
+        "valid-dyn-req"
+    }
+
+    #[get("/ex2-target/<pathpart>")]
+    fn target_ex2(pathpart: String) -> String {
+        pathpart
+    }
+
+    #[get("/static/something")]
+    fn static_route() -> ::rocket::response::content::Content<&'static str> {
+        ::rocket::response::content::Content(
+            ::rocket::http::ContentType::HTML,
+            "<div><form></form></div>",
+        )
     }
 }
