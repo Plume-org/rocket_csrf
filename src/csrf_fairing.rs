@@ -870,9 +870,9 @@ How are you?
         "valid-dyn-req"
     }
 
-    #[get("/ex2-target/<dyn>")]
-    fn target_ex2(dyn: String) -> String {
-        dyn
+    #[get("/ex2-target/<pathpart>")]
+    fn target_ex2(pathpart: String) -> String {
+        pathpart
     }
 
     #[get("/static/something")]
