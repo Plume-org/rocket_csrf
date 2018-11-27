@@ -30,13 +30,8 @@ impl Path {
                     }
                 })
                 .collect();
-        if path.len() > 0 && path[0..path.len() - 1].iter().any(|a| {
-            if let PathPart::MultiDynamic(_) = a {
-                true
-            } else {
-                false
-            }
-        }) {
+        let is_multidyn = |p: &PathPart| if let PathPart::MultiDynamic(_) = p { true } else {false};
+        if !path.is_empty() && path[0..path.len() - 1].iter().any(is_multidyn) {
             panic!("PathPart::MultiDynamic can only be found at end of path"); //TODO return error instead of panic
         }
 
@@ -151,7 +146,7 @@ impl Path {
                 }
             }
         }
-        if res.len() == 0 {
+        if res.is_empty() {
             res.push('/');
         }
         if let Some(ref keymap) = self.param {

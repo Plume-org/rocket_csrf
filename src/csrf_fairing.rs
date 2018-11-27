@@ -327,7 +327,7 @@ impl Fairing for CsrfFairing {
             .is_some()
         {
             data.peek().split(|&c| c==0x0A || c==0x0D)//0x0A=='\n', 0x0D=='\r'
-                .filter(|l| l.len() > 0)
+                .filter(|l| !l.is_empty())
                 .skip_while(|&l| l != CSRF_FORM_FIELD_MULTIPART && l != &CSRF_FORM_FIELD_MULTIPART[..CSRF_FORM_FIELD_MULTIPART.len()-2])
                 .skip(1)
                 .map(|token| token.split(|&c| c==10 || c==13).next())
@@ -714,7 +714,7 @@ How are you?
             .dispatch(); //token well inserted
         assert!(
             response.body_string().unwrap().len()
-                > "<div><form></form></div>".len()
+                > "<div><form method='POST'></form></div>".len()
                     + "<input type=\"hidden\" name=\"csrf-token\" value=\"\"/>".len()
         );
 
@@ -724,7 +724,7 @@ How are you?
             .dispatch(); //url well ignored by token inserter
         assert_eq!(
             response.body_string(),
-            Some("<div><form></form></div>".to_owned())
+            Some("<div><form method='POST'></form></div>".to_owned())
         );
     }
 
@@ -739,7 +739,7 @@ How are you?
             .dispatch();
         assert_eq!(
             response.body_string(),
-            Some("<div><form></form></div>".to_owned())
+            Some("<div><form method='POST'></form></div>".to_owned())
         );
     }
 
@@ -759,7 +759,7 @@ How are you?
             .dispatch(); //token well inserted
         assert!(
             response.body_string().unwrap().len()
-                > "<div><form></form></div>".len()
+                > "<div><form method='POST'></form></div>".len()
                     + "<input type=\"hidden\" name=\"csrf-token\" value=\"\"/>".len()
         );
 
@@ -809,14 +809,14 @@ How are you?
         let client = Client::new(rocket).expect("valid rocket instance");
 
         let mut response = client.get("/").dispatch();
-        assert_eq!(response.body_string().unwrap(), "<div><form></form></div>");
+        assert_eq!(response.body_string().unwrap(), "<div><form method='POST'></form></div>");
         assert!(response.headers().get("set-cookie").next().is_none()); // nothing inserted if no session detected
 
         let mut response = client
             .get("/")
             .cookie(Cookie::new(CSRF_COOKIE_NAME, ""))
             .dispatch();
-        assert_eq!(response.body_string().unwrap(), "<div><form></form></div>");
+        assert_eq!(response.body_string().unwrap(), "<div><form method='POST'></form></div>");
         assert!(
             response
                 .headers()
@@ -831,7 +831,7 @@ How are you?
     fn index() -> ::rocket::response::content::Content<&'static str> {
         ::rocket::response::content::Content(
             ::rocket::http::ContentType::HTML,
-            "<div><form></form></div>",
+            "<div><form method='POST'></form></div>",
         )
     }
 
@@ -879,7 +879,7 @@ How are you?
     fn static_route() -> ::rocket::response::content::Content<&'static str> {
         ::rocket::response::content::Content(
             ::rocket::http::ContentType::HTML,
-            "<div><form></form></div>",
+            "<div><form method='POST'></form></div>",
         )
     }
 }
