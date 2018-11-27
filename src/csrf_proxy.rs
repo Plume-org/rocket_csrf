@@ -42,8 +42,10 @@ impl Buffer {
     }
 
     fn len(&self) -> usize {
-        self.buf.iter().fold(0, |size, buf| size + buf.len())
-            - self.pos.iter().fold(0, |size, pos| size + pos)
+        let len: usize = self.buf.iter().map(Vec::len)
+            .sum();
+        let pos: usize = self.pos.iter().sum();
+        len - pos
     }
 
     fn is_empty(&self) -> bool {
@@ -61,6 +63,8 @@ impl Default for Buffer {
 enum ParseState {
     Init,                    //default state
     PartialFormMatch,        //when parsing "<form"
+    SearchMethodForm,        //when searching for a method=\"POST\" tag
+    MatchingMethodForm,      //when matching against method=\"POST\"
     SearchFormElem,          //like default state, but inside a form
     PartialFormElemMatch,    //when parsing "<input", "<textarea" or other form elems, and "</form"
     SearchMethod(usize),     //when inside the first <input>, search for begining of a param
@@ -145,14 +149,53 @@ impl<'a> Read for CsrfProxy<'a> {
                             {
                                 buf = &buf[5..];
                                 consumed += 5;
-                                if lower_begin == "form".as_bytes() {
-                                    SearchFormElem
+                                if lower_begin == b"form" {
+                                    SearchMethodForm
                                 } else {
                                     Init
                                 }
                             } else {
                                 leave = true;
                                 PartialFormMatch
+                            }
+                        }
+                        SearchMethodForm => {
+                            if let Some(tag_pos) = buf.iter().position(|&c| c as char == ' ' || c as char == '>') {
+                                buf = &buf[tag_pos..];
+                                consumed += tag_pos;
+                                if buf[0] as char == ' ' {
+                                    MatchingMethodForm
+                                } else {
+                                    Init
+                                }
+                            } else {
+                                leave = true;
+                                consumed += buf.len();
+                                SearchMethodForm
+                            }
+                        }
+                        MatchingMethodForm => {
+                            if let Some(lower_method) =
+                                buf.get(1..14).map(|slice| slice.to_ascii_lowercase())
+                            {
+                                buf = &buf[1..];
+                                consumed+=1;
+                                if lower_method.starts_with(b"method=post") {
+                                    buf = &buf[11..];
+                                    consumed += 11;
+                                    SearchFormElem
+                                } else if lower_method.starts_with(b"method=\"post\"")
+                                    || lower_method.starts_with(b"method='post'")
+                                {
+                                    buf = &buf[13..];
+                                    consumed += 13;
+                                    SearchFormElem
+                                } else {
+                                    SearchMethodForm
+                                }
+                            } else {
+                                leave = true;
+                                MatchingMethodForm
                             }
                         }
                         SearchFormElem => {
@@ -170,15 +213,15 @@ impl<'a> Read for CsrfProxy<'a> {
                             if let Some(lower_begin) =
                                 buf.get(1..9).map(|slice| slice.to_ascii_lowercase())
                             {
-                                if lower_begin.starts_with("/form".as_bytes())
-                                    || lower_begin.starts_with("textarea".as_bytes())
-                                    || lower_begin.starts_with("button".as_bytes())
-                                    || lower_begin.starts_with("select".as_bytes())
+                                if lower_begin.starts_with(b"/form")
+                                    || lower_begin.starts_with(b"textarea")
+                                    || lower_begin.starts_with(b"button")
+                                    || lower_begin.starts_with(b"select")
                                 {
                                     insert_token = true;
                                     leave = true;
                                     Init
-                                } else if lower_begin.starts_with("input".as_bytes()) {
+                                } else if lower_begin.starts_with(b"input") {
                                     SearchMethod(6)
                                 } else {
                                     buf = &buf[9..];
@@ -213,13 +256,13 @@ impl<'a> Read for CsrfProxy<'a> {
                                 .get(pos..pos + 14)
                                 .map(|slice| slice.to_ascii_lowercase())
                             {
-                                if lower_begin.starts_with("name=\"_method\"".as_bytes())
-                                    || lower_begin.starts_with("name='_method'".as_bytes())
+                                if lower_begin.starts_with(b"name=\"_method\"")
+                                    || lower_begin.starts_with(b"name='_method'")
                                 {
                                     buf = &buf[pos + 14..];
                                     consumed += pos + 14;
                                     CloseInputTag
-                                } else if lower_begin.starts_with("name=_method".as_bytes()) {
+                                } else if lower_begin.starts_with(b"name=_method") {
                                     buf = &buf[pos + 12..];
                                     consumed += pos + 12;
                                     CloseInputTag
@@ -327,7 +370,7 @@ mod tests {
     #[test]
     fn test_proxy_identity() {
         must_finish!{{
-            let data = "<!DOCTYPE html>
+            let data = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
@@ -335,163 +378,154 @@ mod tests {
   <body>
     Body of this simple doc
   </body>
-</html>"
-            .as_bytes();
-            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+</html>";
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(&data[..])), b"abcd");
             let mut pr_data = Vec::new();
             let read = proxy.read_to_end(&mut pr_data);
             assert_eq!(read.unwrap(), data.len());
-            assert_eq!(&pr_data, &data)
+            assert_eq!(pr_data[..], data[..])
         }}
     }
 
     #[test]
     fn test_token_insertion_empty_form() {
         must_finish!{{
-            let data = "<!DOCTYPE html>
+            let data = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <p>
           some text
         </p>
      </form>
   </body>
-</html>"
-                .as_bytes();
-            let expected = "<!DOCTYPE html>
+</html>";
+            let expected = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <p>
           some text
         </p>
      <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/></form>
   </body>
-</html>"
-                .as_bytes();
-            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+</html>";
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(&data[..])), b"abcd");
             let mut pr_data = Vec::new();
             let read = proxy.read_to_end(&mut pr_data);
             assert_eq!(
                 read.unwrap(),
                 data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
             );
-            assert_eq!(&pr_data, &expected)
+            assert_eq!(pr_data[..], expected[..])
         }}
     }
 
     #[test]
     fn test_token_insertion() {
         must_finish!{{
-           let data = "<!DOCTYPE html>
+           let data = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <input name=\"name\"/>
      </form>
   </body>
-</html>"
-                .as_bytes();
-            let expected = "<!DOCTYPE html>
+</html>";
+            let expected = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/><input name=\"name\"/>
      </form>
   </body>
-</html>"
-                .as_bytes();
-            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+</html>";
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(&data[..])), b"abcd");
             let mut pr_data = Vec::new();
             let read = proxy.read_to_end(&mut pr_data);
             assert_eq!(
                 read.unwrap(),
                 data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
             );
-            assert_eq!(&pr_data, &expected)
+            assert_eq!(pr_data[..], expected[..])
         }
     }}
 
     #[test]
     fn test_token_insertion_with_method() {
         must_finish!{{
-            let data = "<!DOCTYPE html>
+            let data = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <input name=\"_method\"/>
      </form>
   </body>
-</html>"
-                .as_bytes();
-            let expected = "<!DOCTYPE html>
+</html>";
+            let expected = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <input name=\"_method\"/><input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>
      </form>
   </body>
-</html>"
-                .as_bytes();
-            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+</html>";
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(&data[..])), b"abcd");
             let mut pr_data = Vec::new();
             let read = proxy.read_to_end(&mut pr_data);
             assert_eq!(
                 read.unwrap(),
                 data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
             );
-            assert_eq!(&pr_data, &expected);
-            let data = "<!DOCTYPE html>
+            assert_eq!(pr_data[..], expected[..]);
+            let data = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <input name=_method/>
      </form>
   </body>
-</html>"
-                .as_bytes();
-            let expected = "<!DOCTYPE html>
+</html>";
+            let expected = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <input name=_method/><input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>
      </form>
   </body>
-</html>"
-            .as_bytes();
-            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+</html>";
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(&data[..])), b"abcd");
             let mut pr_data = Vec::new();
             let read = proxy.read_to_end(&mut pr_data);
             assert_eq!(
                 read.unwrap(),
                 data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
             );
-            assert_eq!(&pr_data, &expected)
+            assert_eq!(pr_data[..], expected[..])
         }}
     }
 
@@ -537,167 +571,182 @@ mod tests {
     fn test_difficult_cut() {
         //this basically re-test the parser, using short reads so it encounter rare code paths
         must_finish!{{
-            let data = "<!DOCTYPE html>
+            let data = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form action=\"/\" method=POST>
         <p>
           some text
         </p>
      </form>
   </body>
-</html>"
-                .as_bytes();
-            let expected = "<!DOCTYPE html>
+</html>";
+            let expected = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form action=\"/\" method=POST>
         <p>
           some text
         </p>
      <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/></form>
   </body>
-</html>"
-                .as_bytes();
-            let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
+</html>";
+            let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), b"abcd");
             let mut pr_data = Vec::new();
             let read = proxy.read_to_end(&mut pr_data);
             assert_eq!(
                 read.unwrap(),
                 data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
             );
-            assert_eq!(&pr_data, &expected);
+            assert_eq!(pr_data[..], expected[..])
         }}
         must_finish!{{
-            let data = "<!DOCTYPE html>
+            let data = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <input name=\"name\"/>
      </form>
   </body>
-</html>"
-                .as_bytes();
-            let expected = "<!DOCTYPE html>
+</html>";
+            let expected = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/><input name=\"name\"/>
      </form>
   </body>
-</html>"
-                .as_bytes();
-            let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
+</html>";
+            let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), b"abcd");
             let mut pr_data = Vec::new();
             let read = proxy.read_to_end(&mut pr_data);
             assert_eq!(
                 read.unwrap(),
                 data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
             );
-            assert_eq!(&pr_data, &expected);
+            assert_eq!(pr_data[..], expected[..])
         }}
         must_finish!{{
-            let data = "<!DOCTYPE html>
+            let data = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <input name=\"not_method\"/>
      </form>
   </body>
-</html>"
-                .as_bytes();
-            let expected = "<!DOCTYPE html>
+</html>";
+            let expected = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/><input name=\"not_method\"/>
      </form>
   </body>
-</html>"
-                .as_bytes();
-            let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
+</html>";
+            let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), b"abcd");
             let mut pr_data = Vec::new();
             let read = proxy.read_to_end(&mut pr_data);
             assert_eq!(
                 read.unwrap(),
                 data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
             );
-            assert_eq!(&pr_data, &expected);
+            assert_eq!(pr_data[..], expected[..]);
         }}
         must_finish!{{
-            let data = "<!DOCTYPE html>
+            let data = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <input name='_method'/>
      </form>
   </body>
-</html>"
-                .as_bytes();
-            let expected = "<!DOCTYPE html>
+</html>";
+            let expected = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <input name='_method'/><input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>
      </form>
   </body>
-</html>"
-                .as_bytes();
-            let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), "abcd".as_bytes());
+</html>";
+            let mut proxy = CsrfProxy::from(Box::new(SlowReader { content: data }), b"abcd");
             let mut pr_data = Vec::new();
             let read = proxy.read_to_end(&mut pr_data);
             assert_eq!(
                 read.unwrap(),
                 data.len() + "<input type=\"hidden\" name=\"csrf-token\" value=\"abcd\"/>".len()
             );
-            assert_eq!(&pr_data, &expected)
+            assert_eq!(pr_data[..], expected[..])
         }}
     }
 
     #[test]
     fn test_eof() {
         must_finish!{{
-            let data = "<!DOCTYPE html>
+            let data = b"<!DOCTYPE html>
 <html>
   <head>
     <title>Simple doc</title>
   </head>
   <body>
-     <form>
+     <form method=\"POST\">
         <p>
           some text
-        </p>"
-                .as_bytes();
+        </p>";
 
-            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(data)), "abcd".as_bytes());
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(&data[..])), b"abcd");
             let mut pr_data = Vec::new();
             let read = proxy.read_to_end(&mut pr_data);
             assert_eq!(read.unwrap(), data.len());
-            assert_eq!(&pr_data, &data)
+            assert_eq!(pr_data[..], data[..])
+        }}
+    }
+
+    #[test]
+    fn test_method_get() {
+        must_finish!{{
+            let data = b"<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple doc</title>
+  </head>
+  <body>
+     <form action=\".\">
+        <p>
+          some text
+        </p>
+     </form>
+  </body>
+</html>";
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(&data[..])), b"abcd");
+            let mut pr_data = Vec::new();
+            let read = proxy.read_to_end(&mut pr_data);
+            assert_eq!(read.unwrap(), data.len());
+            assert_eq!(pr_data[..], data[..])
         }}
     }
 }
