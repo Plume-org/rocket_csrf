@@ -20,8 +20,7 @@ use csrf_token::CsrfToken;
 use path::Path;
 use utils::parse_args;
 
-const CSRF_FORM_FIELD_MULTIPART: &[u8] =
-    "Content-Disposition: form-data; name=\"csrf-token\"".as_bytes();
+const CSRF_FORM_FIELD_MULTIPART: &[u8] = b"Content-Disposition: form-data; name=\"csrf-token\"";
 
 /// Builder for [CsrfFairing](struct.CsrfFairing.html)
 ///
@@ -309,6 +308,13 @@ impl Fairing for CsrfFairing {
             _ => {}
         };
 
+        {
+            let cookies = request.cookies();
+            if cookies.iter().count() == 0 {
+                return;
+            }
+        }
+
         let (csrf_engine, _) = request
             .guard::<State<(AesGcmCsrfProtection, i64)>>()
             .unwrap()
@@ -517,7 +523,7 @@ mod tests {
             Vec::new()
         };
         let req = client.post(path).body(&token);
-        if cookie.len() > 0 {
+        if !cookie.is_empty() {
             req.cookie(Cookie::new(CSRF_COOKIE_NAME, cookie))
         } else {
             req
@@ -529,13 +535,13 @@ mod tests {
         let rocket = default_rocket(default_builder().finalize().unwrap());
         let client = Client::new(rocket).expect("valid rocket instance");
 
-        let mut response = client.post("/").dispatch(); //violation well detected
+        let mut response = client.post("/").cookie(Cookie::new("some", "cookie")).dispatch(); //violation well detected
         assert_eq!(response.body_string(), Some("violation".to_owned()));
 
-        let mut response = client.post("/ex1").dispatch(); //redirection on post
+        let mut response = client.post("/ex1").cookie(Cookie::new("some", "cookie")).dispatch(); //redirection on post
         assert_eq!(response.body_string(), Some("target-ex1".to_owned()));
 
-        let mut response = client.post("/ex2/abcd").dispatch(); //redirection with dyn part
+        let mut response = client.post("/ex2/abcd").cookie(Cookie::new("some", "cookie")).dispatch(); //redirection with dyn part
         assert_eq!(response.body_string(), Some("abcd".to_owned()));
     }
 
@@ -544,17 +550,17 @@ mod tests {
         let rocket = default_rocket(default_builder().finalize().unwrap());
         let client = Client::new(rocket).expect("valid rocket instance");
 
-        let mut response = client.get("/ex1").dispatch(); //no redirection on get
+        let mut response = client.get("/ex1").cookie(Cookie::new("some", "cookie")).dispatch(); //no redirection on get
         assert_eq!(response.body_string(), Some("get-ex1".to_owned()));
 
         let (token, cookie) = get_token(&client);
 
         let mut response =
-            post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).dispatch();
+            post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).cookie(Cookie::new("some", "cookie")).dispatch();
         assert_eq!(response.body_string(), Some("success".to_owned()));
 
         let mut response =
-            post_token(&client, "/ex1".to_owned(), token.clone(), cookie.clone()).dispatch();
+            post_token(&client, "/ex1".to_owned(), token.clone(), cookie.clone()).cookie(Cookie::new("some", "cookie")).dispatch();
         assert_eq!(response.body_string(), Some("post-ex1".to_owned()));
 
         let mut response = post_token(
@@ -562,7 +568,7 @@ mod tests {
             "/ex2/some-url".to_owned(),
             token.clone(),
             cookie.clone(),
-        ).dispatch();
+        ).cookie(Cookie::new("some", "cookie")).dispatch();
         assert_eq!(response.body_string(), Some("valid-dyn-req".to_owned()));
     }
 
@@ -574,13 +580,13 @@ mod tests {
         let (token, cookie) = get_token(&client);
 
         let mut response =
-            post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).dispatch();
+            post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).cookie(Cookie::new("some", "cookie")).dispatch();
         assert_eq!(response.body_string(), Some("success".to_owned()));
         ::std::thread::sleep(::std::time::Duration::from_secs(6));
 
         //access / with timed out token
         let mut response =
-            post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).dispatch();
+            post_token(&client, "/".to_owned(), token.clone(), cookie.clone()).cookie(Cookie::new("some", "cookie")).dispatch();
         assert_eq!(response.body_string(), Some("violation".to_owned()));
     }
 
@@ -595,18 +601,18 @@ mod tests {
 
         //having only one part fail
         let mut response =
-            post_token(&client2, "/".to_owned(), token.clone(), "".to_owned()).dispatch();
+            post_token(&client2, "/".to_owned(), token.clone(), "".to_owned()).cookie(Cookie::new("some", "cookie")).dispatch();
         assert_eq!(response.body_string(), Some("violation".to_owned()));
 
         let mut response =
-            post_token(&client1, "/".to_owned(), "".to_owned(), cookie.clone()).dispatch();
+            post_token(&client1, "/".to_owned(), "".to_owned(), cookie.clone()).cookie(Cookie::new("some", "cookie")).dispatch();
         assert_eq!(response.body_string(), Some("violation".to_owned()));
 
         let (token2, _cookie2) = get_token(&client2);
 
         //having 2 incompatible parts fail
         let mut response =
-            post_token(&client1, "/".to_owned(), token2.clone(), cookie.clone()).dispatch();
+            post_token(&client1, "/".to_owned(), token2.clone(), cookie.clone()).cookie(Cookie::new("some", "cookie")).dispatch();
         assert_eq!(response.body_string(), Some("violation".to_owned()));
     }
 
@@ -674,6 +680,7 @@ How are you?
             ))
             .body(body)
             .cookie(Cookie::new(CSRF_COOKIE_NAME, cookie.clone()))
+            .cookie(Cookie::new("some", "cookie"))
             .dispatch();
 
         assert_eq!(response.body_string(), Some("success".to_owned()));
@@ -693,6 +700,7 @@ How are you?
             ))
             .body(body)
             .cookie(Cookie::new(CSRF_COOKIE_NAME, cookie))
+            .cookie(Cookie::new("some", "cookie"))
             .dispatch();
 
         assert_eq!(response.body_string(), Some("violation".to_owned()));
@@ -783,7 +791,7 @@ How are you?
 
         //client 1 and 2 should be compatible
         let mut response =
-            post_token(&client1, "/".to_owned(), token2.clone(), cookie2.clone()).dispatch();
+            post_token(&client1, "/".to_owned(), token2.clone(), cookie2.clone()).cookie(Cookie::new("some", "cookie")).dispatch();
         assert_eq!(response.body_string(), Some("success".to_owned()));
     }
 
@@ -824,6 +832,15 @@ How are you?
                 .unwrap()
                 .contains("Max-Age=0")
         ) // delete cookie if no longer in session
+    }
+
+    #[test]
+    fn test_allow_request_without_session() {
+        let rocket = default_rocket(default_builder().finalize().unwrap());
+        let client = Client::new(rocket).expect("valid rocket instance");
+
+        let mut response = client.post("/").dispatch();
+        assert_eq!(response.body_string().unwrap(), "success");
     }
 
     //Routes for above test
