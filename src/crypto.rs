@@ -1,4 +1,5 @@
 use ring::aead::{CHACHA20_POLY1305, OpeningKey, open_in_place, SealingKey, seal_in_place};
+use ring::constant_time::verify_slices_are_equal;
 use ring::rand::{SecureRandom, SystemRandom};
 use std::time::SystemTime;
 
@@ -54,7 +55,7 @@ impl CsrfProtection {
     }
 
     pub fn verify_token_pair(&self, token: &CsrfToken, cookie: &CsrfCookie) -> bool {
-        let token_ok = token.token == cookie.token;
+        let token_ok = verify_slices_are_equal(token.token,cookie.token).is_ok();
         let not_expired = cookie.time_left() > 0; 
 
         token_ok && not_expired
