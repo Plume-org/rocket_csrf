@@ -43,9 +43,8 @@
 //! You should define a route for csrf violation error, and registe it in the builder, otherwise
 //! errors will simply be redirected to the route matching `/`
 //!
-extern crate csrf;
 extern crate data_encoding;
-extern crate rand;
+extern crate ring;
 extern crate serde;
 extern crate test;
 extern crate time;
@@ -60,9 +59,14 @@ mod csrf_proxy;
 mod csrf_token;
 mod path;
 mod utils;
+mod crypto;
 
 pub use self::csrf_fairing::{CsrfFairing, CsrfFairingBuilder};
 pub use self::csrf_token::CsrfToken;
+const CSRF_COOKIE_NAME: &str = "csrf";
+const CSRF_FORM_FIELD: &str = "csrf-token";
+const CSRF_FORM_FIELD_MULTIPART: &[u8] = b"Content-Disposition: form-data; name=\"csrf-token\"";
+
 
 #[cfg(test)]
 mod tests {

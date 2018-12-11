@@ -1,4 +1,4 @@
-use csrf::{AesGcmCsrfProtection, CsrfProtection, CSRF_COOKIE_NAME};
+use CSRF_COOKIE_NAME;
 use data_encoding::BASE64URL_NOPAD;
 use rocket::http::{Cookie, SameSite, Status};
 use rocket::outcome::Outcome;
@@ -6,6 +6,8 @@ use rocket::request::{self, FromRequest};
 use rocket::{Request, State};
 use serde::{Serialize, Serializer};
 use time::Duration;
+
+use crypto::CsrfProtection;
 
 /// Csrf token to insert into pages.
 ///
@@ -40,7 +42,7 @@ impl<'a, 'r> FromRequest<'a, 'r> for CsrfToken {
 
     fn from_request(request: &'a Request<'r>) -> request::Outcome<Self, ()> {
         let (csrf_engine, duration) = request
-            .guard::<State<(AesGcmCsrfProtection, i64)>>()
+            .guard::<State<(CsrfProtection, u64)>>()
             .unwrap()
             .inner();
 
@@ -50,35 +52,26 @@ impl<'a, 'r> FromRequest<'a, 'r> for CsrfToken {
         {
             Outcome::Forward(())
         } else {
-            let token_value = cookies
+            let mut token_value = cookies
                 .get(CSRF_COOKIE_NAME)
-                .and_then(|cookie| BASE64URL_NOPAD.decode(cookie.value().as_bytes()).ok())
-                .and_then(|cookie| csrf_engine.parse_cookie(&cookie).ok())
-                .and_then(|cookie| {
-                    let value = cookie.value();
-                    if value.len() == 64 {
-                        let mut array = [0; 64];
-                        array.copy_from_slice(&value);
-                        Some(array)
-                    } else {
-                        None
-                    }
-                }); //when request guard is called, parse cookie to get it's encrypted secret (if there is a cookie)
+                .and_then(|cookie| BASE64URL_NOPAD.decode(cookie.value().as_bytes()).ok());
+            let token_value = token_value.as_mut().and_then(|cookie| csrf_engine.parse_cookie(&mut *cookie).ok());
 
-            match csrf_engine.generate_token_pair(token_value.as_ref(), *duration) {
+            let mut buf = [0; 192];
+            match csrf_engine.generate_token_pair(token_value, *duration, &mut buf) {
                 Ok((token, cookie)) => {
                     let mut c =
-                        Cookie::build(CSRF_COOKIE_NAME, BASE64URL_NOPAD.encode(cookie.value()))
+                        Cookie::build(CSRF_COOKIE_NAME, BASE64URL_NOPAD.encode(cookie))
                             .http_only(true)
                             .secure(true)
                             .same_site(SameSite::Strict)
                             .path("/")
-                            .max_age(Duration::seconds(*duration))
+                            .max_age(Duration::seconds(*duration as i64))
                             .finish();
 
                     cookies.add(c);
                     Outcome::Success(CsrfToken {
-                        value: BASE64URL_NOPAD.encode(token.value()),
+                        value: BASE64URL_NOPAD.encode(token),
                     })
                 }
                 Err(_) => Outcome::Failure((Status::InternalServerError, ())),

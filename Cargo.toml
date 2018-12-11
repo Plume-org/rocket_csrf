@@ -9,9 +9,8 @@ license = "GPL-3.0"
 keywords = ["rocket", "csrf", "security"]
 
 [dependencies]
-csrf = "~0.3.0"
 data-encoding = "~2.1.1"
-rand = "~0.6.1"
+ring = "~0.13.5"
 rocket = "0.4.0-rc.1"
 serde = "~1.0"
 time = "~0.1.40"
