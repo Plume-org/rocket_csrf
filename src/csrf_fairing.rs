@@ -353,7 +353,7 @@ impl Fairing for CsrfFairing {
 
         if let Some(token) = token {
             if let Some(cookie) = cookie {
-                if csrf_engine.verify_token_pair(token, cookie) {
+                if csrf_engine.verify_token_pair(&token, &cookie) {
                     return; //if we got both token and cookie, and they match each other, we do nothing
                 }
             }
