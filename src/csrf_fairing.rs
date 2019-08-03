@@ -57,7 +57,7 @@ use {CSRF_COOKIE_NAME, CSRF_FORM_FIELD, CSRF_FORM_FIELD_MULTIPART};
 pub struct CsrfFairingBuilder {
     duration: u64,
     default_target: (String, Method),
-    exceptions: Vec<(String, String, Method)>,
+    exceptions: Vec<(String, String, Option<Method>)>,
     secret: Option<[u8; 32]>,
     auto_insert: bool,
     auto_insert_disable_prefix: Vec<String>,
@@ -132,15 +132,15 @@ impl CsrfFairingBuilder {
     ///     rocket::ignite()
     ///         .attach(rocket_csrf::CsrfFairingBuilder::new()
     ///                 .set_exceptions(vec![
-    ///                     ("/some/path".to_owned(), "/some/path".to_owned(), rocket::http::Method::Post),//don't verify csrf token
-    ///                     ("/some/<other>/path".to_owned(), "/csrf-error?where=<other>".to_owned(), rocket::http::Method::Get)
+    ///                     ("/some/path".to_owned(), "/some/path".to_owned(), Some(rocket::http::Method::Post)),//don't verify csrf token
+    ///                     ("/some/<other>/path".to_owned(), "/csrf-error?where=<other>".to_owned(), Some(rocket::http::Method::Get))
     ///                 ])
     ///                 .finalize().unwrap())
     ///         //add your routes, other fairings...
     ///         .launch();
     /// }
     /// ```
-    pub fn set_exceptions(mut self, exceptions: Vec<(String, String, Method)>) -> Self {
+    pub fn set_exceptions(mut self, exceptions: Vec<(String, String, Option<Method>)>) -> Self {
         self.exceptions = exceptions;
         self
     }
@@ -148,7 +148,7 @@ impl CsrfFairingBuilder {
     /// [`set_exceptions`] for more informations on how exceptions work.
     ///
     /// [`set_exceptions`]: #method.set_exceptions
-    pub fn add_exceptions(mut self, exceptions: Vec<(String, String, Method)>) -> Self {
+    pub fn add_exceptions(mut self, exceptions: Vec<(String, String, Option<Method>)>) -> Self {
         self.exceptions.extend(exceptions);
         self
     }
@@ -274,7 +274,7 @@ impl Default for CsrfFairingBuilder {
 pub struct CsrfFairing {
     duration: u64,
     default_target: (Path, Method),
-    exceptions: Vec<(Path, Path, Method)>,
+    exceptions: Vec<(Path, Path, Option<Method>)>,
     secret: [u8; 32],
     auto_insert: bool,
     auto_insert_disable_prefix: Vec<String>,
@@ -366,7 +366,9 @@ impl Fairing for CsrfFairing {
                 if let Some(destination) = dst.map(&param) {
                     if let Ok(origin) = Origin::parse_owned(destination) {
                         request.set_uri(origin);
-                        request.set_method(*method);
+                        if let Some(method) = method {
+                            request.set_method(*method);
+                        }
                         return;
                     }
                 }
@@ -465,12 +467,12 @@ mod tests {
             .set_exceptions(vec![(
                 "/ex1".to_owned(),
                 "/ex1-target".to_owned(),
-                Method::Post,
+                Some(Method::Post),
             )])
             .add_exceptions(vec![(
                 "/ex2/<dyn>".to_owned(),
                 "/ex2-target/<dyn>".to_owned(),
-                Method::Get,
+                Some(Method::Get),
             )])
     }
 
