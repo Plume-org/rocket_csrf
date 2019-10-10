@@ -1,6 +1,5 @@
 #![deny(missing_docs)]
 #![cfg_attr(feature = "cargo-clippy", deny(warnings))]
-#![feature(const_str_as_bytes)]
 #![feature(decl_macro, test, proc_macro_hygiene)]
 //! # Rocket Csrf
 //!
