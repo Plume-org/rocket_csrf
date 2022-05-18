@@ -7,6 +7,7 @@ repository = "https://github.com/fdb-hiroshima/rocket_csrf"
 readme = "README.md"
 license = "GPL-3.0"
 keywords = ["rocket", "csrf", "security"]
+edition = "2021"
 
 [dependencies]
 data-encoding = "~2.1.1"
