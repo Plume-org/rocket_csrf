@@ -11,6 +11,6 @@ keywords = ["rocket", "csrf", "security"]
 [dependencies]
 data-encoding = "~2.1.1"
 ring = "~0.13.5"
-rocket = "0.4.0-rc.1"
+rocket = "0.5.0-rc.2"
 serde = "~1.0"
 time = "~0.1.40"
