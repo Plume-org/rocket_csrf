@@ -1,5 +1,6 @@
-use ring::aead::{CHACHA20_POLY1305, OpeningKey, open_in_place, SealingKey, seal_in_place};
+use ring::aead::{CHACHA20_POLY1305, OpeningKey, SealingKey, UnboundKey, BoundKey, Nonce, NonceSequence, Aad};
 use ring::constant_time::verify_slices_are_equal;
+use ring::error::Unspecified;
 use ring::rand::{SecureRandom, SystemRandom};
 use std::time::SystemTime;
 
@@ -23,12 +24,14 @@ impl CsrfProtection {
     }
 
     pub fn parse_cookie<'a>(&self, cookie: &'a mut [u8]) -> Result<CsrfCookie<'a>, CsrfError> {
-        let key = OpeningKey::new(&CHACHA20_POLY1305, &self.aead_key).map_err(|_| CsrfError::UnknownError)?;
         if cookie.len() < NONCE_SIZE {
             return Err(CsrfError::ValidationError);// cookie is too short to be valid
         }
         let (nonce, token) = cookie.split_at_mut(NONCE_SIZE);
-        let token = open_in_place(&key, nonce, &[], 0, token).map_err(|_| CsrfError::ValidationError)?;
+        let unbound_key = UnboundKey::new(&CHACHA20_POLY1305, &self.aead_key).map_err(|_| CsrfError::UnknownError)?;
+        let nonce = OneNonceSequence::new(Nonce::try_assume_unique_for_key(nonce).map_err(|_| CsrfError::ValidationError)?);
+        let mut key = OpeningKey::new(unbound_key, nonce);
+        let token = key.open_in_place(Aad::from(&[]), token).map_err(|_| CsrfError::ValidationError)?;
         if token.len() < DATE_SIZE {// shorter than a timestamp, must be invalid
             return Err(CsrfError::ValidationError);
         }
@@ -43,12 +46,15 @@ impl CsrfProtection {
     }
 
     pub fn parse_token<'a>(&self, token: &'a mut [u8]) -> Result<CsrfToken<'a>, CsrfError> {
-        let key = OpeningKey::new(&CHACHA20_POLY1305, &self.aead_key).map_err(|_| CsrfError::UnknownError)?;
         if token.len() < NONCE_SIZE {
             return Err(CsrfError::ValidationError);// cookie is too short to be valid
         }
         let (nonce, token) = token.split_at_mut(NONCE_SIZE);
-        let token = open_in_place(&key, nonce, &[], 0, token).map_err(|_| CsrfError::ValidationError)?;
+        let unbound_key = UnboundKey::new(&CHACHA20_POLY1305, &self.aead_key).map_err(|_| CsrfError::ValidationError)?;
+        let nonce = OneNonceSequence::new(Nonce::try_assume_unique_for_key(nonce).map_err(|_| CsrfError::ValidationError)?);
+        let mut key = OpeningKey::new(unbound_key, nonce);
+        // let token = open_in_place(&key, nonce, &[], 0, token).map_err(|_| CsrfError::ValidationError)?;
+        let token = key.open_in_place(Aad::from(&[]), token).map_err(|_| CsrfError::ValidationError)?;
         Ok(CsrfToken{
             token,
         })
@@ -62,7 +68,6 @@ impl CsrfProtection {
     }
 
     pub fn generate_token_pair<'a>(&self, previous_token: Option<CsrfCookie>, ttl_seconds: u64, source_buffer: &'a mut[u8; TOKEN_SIZE + COOKIE_SIZE]) -> Result<(&'a[u8], &'a[u8]), CsrfError> {
-        let key = SealingKey::new(&CHACHA20_POLY1305, &self.aead_key).map_err(|_| CsrfError::UnknownError)?;
         let (token, cookie) = source_buffer.split_at_mut(TOKEN_SIZE);
         let expire = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs() + ttl_seconds).map_err(|_| CsrfError::UnknownError)?;
         cookie[NONCE_SIZE..DATE_SIZE+NONCE_SIZE].copy_from_slice(&expire.to_be_bytes());
@@ -80,11 +85,21 @@ impl CsrfProtection {
         
         rand.fill(&mut nonce).map_err(|_| CsrfError::UnknownError)?;
         token[..NONCE_SIZE].copy_from_slice(&nonce);
-        seal_in_place(&key, &nonce, &[], &mut token[NONCE_SIZE..], CHACHA20_POLY1305.tag_len()).map_err(|_| CsrfError::UnknownError)?;
+        let unbound_key = UnboundKey::new(&CHACHA20_POLY1305, &self.aead_key).map_err(|_| CsrfError::ValidationError)?;
+        let nonce_sequence = OneNonceSequence::new(Nonce::assume_unique_for_key(nonce));
+        let mut key = SealingKey::new(unbound_key, nonce_sequence);
+        let mut t = Vec::from(&token[NONCE_SIZE..(TOKEN_SIZE - SIG_SIZE)]);
+        key.seal_in_place_append_tag(Aad::from(&[]), &mut t).map_err(|_| CsrfError::UnknownError)?;
+        token[NONCE_SIZE..].copy_from_slice(&t);
 
         rand.fill(&mut nonce).map_err(|_| CsrfError::UnknownError)?;
         cookie[..NONCE_SIZE].copy_from_slice(&nonce);
-        seal_in_place(&key, &nonce, &[], &mut cookie[NONCE_SIZE..], CHACHA20_POLY1305.tag_len()).map_err(|_| CsrfError::UnknownError)?;
+        let unbound_key = UnboundKey::new(&CHACHA20_POLY1305, &self.aead_key).map_err(|_| CsrfError::ValidationError)?;
+        let nonce_sequence = OneNonceSequence::new(Nonce::assume_unique_for_key(nonce));
+        let mut key = SealingKey::new(unbound_key, nonce_sequence);
+        let mut c = Vec::from(&cookie[NONCE_SIZE..(COOKIE_SIZE - SIG_SIZE)]);
+        key.seal_in_place_append_tag(Aad::from(&[]), &mut c).map_err(|_| CsrfError::UnknownError)?;
+        cookie[NONCE_SIZE..].copy_from_slice(&c);
 
         Ok((token, cookie))
     }
@@ -108,4 +123,21 @@ impl<'a> CsrfCookie<'a> {
 pub enum CsrfError {
     ValidationError,
     UnknownError,
+}
+
+// from ring's test
+struct OneNonceSequence(Option<Nonce>);
+
+impl OneNonceSequence {
+    /// Constructs the sequence allowing `advance()` to be called
+    /// `allowed_invocations` times.
+    fn new(nonce: Nonce) -> Self {
+        Self(Some(nonce))
+    }
+}
+
+impl NonceSequence for OneNonceSequence {
+    fn advance(&mut self) -> Result<Nonce, Unspecified> {
+        self.0.take().ok_or(ring::error::Unspecified)
+    }
 }
