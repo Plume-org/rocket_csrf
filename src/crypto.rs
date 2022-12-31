@@ -84,24 +84,24 @@ impl CsrfProtection {
         let mut nonce = [0;NONCE_SIZE];
         
         rand.fill(&mut nonce).map_err(|_| CsrfError::UnknownError)?;
-        token[..NONCE_SIZE].copy_from_slice(&nonce);
-        let unbound_key = UnboundKey::new(&CHACHA20_POLY1305, &self.aead_key).map_err(|_| CsrfError::ValidationError)?;
-        let nonce_sequence = OneNonceSequence::new(Nonce::assume_unique_for_key(nonce));
-        let mut key = SealingKey::new(unbound_key, nonce_sequence);
-        let mut t = Vec::from(&token[NONCE_SIZE..(TOKEN_SIZE - SIG_SIZE)]);
-        key.seal_in_place_append_tag(Aad::from(&[]), &mut t).map_err(|_| CsrfError::UnknownError)?;
-        token[NONCE_SIZE..].copy_from_slice(&t);
+        self.seal_in_place(nonce, token, TOKEN_SIZE)?;
 
         rand.fill(&mut nonce).map_err(|_| CsrfError::UnknownError)?;
-        cookie[..NONCE_SIZE].copy_from_slice(&nonce);
+        self.seal_in_place(nonce, cookie, COOKIE_SIZE)?;
+
+        Ok((token, cookie))
+    }
+
+    fn seal_in_place(&self, nonce: [u8; NONCE_SIZE], in_out: &mut [u8], in_out_size: usize) -> Result<(), CsrfError> {
+        in_out[..NONCE_SIZE].copy_from_slice(&nonce);
         let unbound_key = UnboundKey::new(&CHACHA20_POLY1305, &self.aead_key).map_err(|_| CsrfError::ValidationError)?;
         let nonce_sequence = OneNonceSequence::new(Nonce::assume_unique_for_key(nonce));
         let mut key = SealingKey::new(unbound_key, nonce_sequence);
-        let mut c = Vec::from(&cookie[NONCE_SIZE..(COOKIE_SIZE - SIG_SIZE)]);
-        key.seal_in_place_append_tag(Aad::from(&[]), &mut c).map_err(|_| CsrfError::UnknownError)?;
-        cookie[NONCE_SIZE..].copy_from_slice(&c);
+        let mut io = Vec::from(&in_out[NONCE_SIZE..(in_out_size - SIG_SIZE)]);
+        key.seal_in_place_append_tag(Aad::from(&[]), &mut io).map_err(|_| CsrfError::UnknownError)?;
+        in_out[NONCE_SIZE..].copy_from_slice(&io);
 
-        Ok((token, cookie))
+        Ok(())
     }
 }
 
