@@ -248,7 +248,7 @@ impl CsrfFairingBuilder {
             exceptions: self
                 .exceptions
                 .iter()
-                .map(|(a, b, m)| (Path::from(&a), Path::from(&b), *m))//TODO verify if source and target are compatible
+                .map(|(a, b, m)| (Path::from(a), Path::from(b), *m))//TODO verify if source and target are compatible
                 .collect(),
             secret,
             auto_insert: self.auto_insert,
@@ -348,7 +348,7 @@ impl Fairing for CsrfFairing {
                     }
                 })
                 .next()
-        }.and_then(|token| BASE64URL_NOPAD.decode(&token).ok());
+        }.and_then(|token| BASE64URL_NOPAD.decode(token).ok());
         let token = token.as_mut().and_then(|token| csrf_engine.parse_token(&mut *token).ok());
 
         if let Some(token) = token {
@@ -388,7 +388,7 @@ impl Fairing for CsrfFairing {
         request.set_method(self.default_target.1)
     }
 
-    fn on_response<'a>(&self, request: &Request, response: &mut Response<'a>) {
+    fn on_response(&self, request: &Request, response: &mut Response) {
         if let Some(ct) = response.content_type() {
             if !ct.is_html() {
                 return;
@@ -412,7 +412,7 @@ impl Fairing for CsrfFairing {
             Outcome::Forward(_) => {
                 if request.cookies().get(CSRF_COOKIE_NAME).is_some() {
                     response.adjoin_header(
-                        &Cookie::build(CSRF_COOKIE_NAME, "")
+                        Cookie::build(CSRF_COOKIE_NAME, "")
                             .max_age(Duration::zero())
                             .finish(),
                     );
@@ -434,19 +434,19 @@ impl Fairing for CsrfFairing {
             if len <= self.auto_insert_max_size {
                 //if this is a small enought body, process the full body
                 let mut res = Vec::with_capacity(len as usize);
-                CsrfProxy::from(body_reader, &token.value())
+                CsrfProxy::from(body_reader, token.value())
                     .read_to_end(&mut res)
                     .unwrap();
                 response.set_sized_body(Cursor::new(res));
             } else {
                 //if body is of known but long size, change it to a stream to preserve memory, by encapsulating it into our "proxy" struct
                 let body = body_reader;
-                response.set_streamed_body(Box::new(CsrfProxy::from(body, &token.value())));
+                response.set_streamed_body(Box::new(CsrfProxy::from(body, token.value())));
             }
         } else {
             //if body is of unknown size, encapsulate it into our "proxy" struct
             let body = body.into_inner();
-            response.set_streamed_body(Box::new(CsrfProxy::from(body, &token.value())));
+            response.set_streamed_body(Box::new(CsrfProxy::from(body, token.value())));
         }
     }
 }

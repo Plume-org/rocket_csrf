@@ -30,7 +30,7 @@ impl Path {
                     }
                 })
                 .collect();
-        let is_multidyn = |p: &PathPart| if let PathPart::MultiDynamic(_) = p { true } else {false};
+        let is_multidyn = |p: &PathPart| matches!(p, PathPart::MultiDynamic(_));
         if !path.is_empty() && path[0..path.len() - 1].iter().any(is_multidyn) {
             panic!("PathPart::MultiDynamic can only be found at end of path"); //TODO return error instead of panic
         }
@@ -55,7 +55,7 @@ impl Path {
         Path { path, param }
     }
 
-    pub fn extract<'a>(&self, uri: &'a str) -> Option<HashMap<&str, String>> {
+    pub fn extract(&self, uri: &str) -> Option<HashMap<&str, String>> {
         //try to match a str against a path, give back a hashmap of correponding parts if it matched
         let mut res: HashMap<&str, String> = HashMap::new();
         let (path, query) = if let Some(pos) = uri.find('?') {
@@ -165,7 +165,7 @@ impl Path {
                 res.push('&');
             }
         }
-        Some(res.trim_right_matches('&').to_owned()) //trim the last '&' which was added if there is a query part
+        Some(res.trim_end_matches('&').to_owned()) //trim the last '&' which was added if there is a query part
     }
 }
 
