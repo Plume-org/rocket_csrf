@@ -60,7 +60,7 @@ impl<'a, 'r> FromRequest<'a, 'r> for CsrfToken {
             let mut buf = [0; 192];
             match csrf_engine.generate_token_pair(token_value, *duration, &mut buf) {
                 Ok((token, cookie)) => {
-                    let mut c =
+                    let c =
                         Cookie::build(CSRF_COOKIE_NAME, BASE64URL_NOPAD.encode(cookie))
                             .http_only(true)
                             .secure(true)

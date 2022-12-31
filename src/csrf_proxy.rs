@@ -73,8 +73,8 @@ enum ParseState {
 }
 
 pub struct CsrfProxy<'a> {
-    underlying: Box<Read + 'a>, //the underlying Reader from which we get data
-    token: Vec<u8>,             //a full input tag loaded with a valid token
+    underlying: Box<dyn Read + 'a>, //the underlying Reader from which we get data
+    token: Vec<u8>,                 //a full input tag loaded with a valid token
     buf: Buffer,
     unparsed: Vec<u8>,
     state: ParseState, //state of the parser
@@ -82,7 +82,7 @@ pub struct CsrfProxy<'a> {
 }
 
 impl<'a> CsrfProxy<'a> {
-    pub fn from(underlying: Box<Read + 'a>, token: &[u8]) -> Self {
+    pub fn from(underlying: Box<dyn Read + 'a>, token: &[u8]) -> Self {
         let tag_begin = b"<input type=\"hidden\" name=\"csrf-token\" value=\"";
         let tag_middle = token;
         let tag_end = b"\"/>";

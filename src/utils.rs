@@ -1,6 +1,6 @@
 pub fn parse_args(args: &str) -> impl Iterator<Item = (&str, &str)> {
     //transform a group of argument into an iterator of key and value
-    args.split('&').filter_map(|kv| parse_keyvalue(&kv))
+    args.split('&').filter_map(parse_keyvalue)
 }
 
 fn parse_keyvalue(kv: &str) -> Option<(&str, &str)> {
