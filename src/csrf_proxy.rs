@@ -749,4 +749,19 @@ mod tests {
             assert_eq!(pr_data[..], data[..])
         }}
     }
+
+    #[test]
+    fn test_persian_content() {
+        must_finish!({
+            let data = std::fs::read_to_string("tests/persian-content.html").unwrap();
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(&data[..])), b"abcd");
+            let mut pr_data = String::new();
+            let read = proxy.read_to_string(&mut pr_data);
+
+            let pr_len = read.unwrap() as i64;
+            let data_len = data.len() as i64;
+            let min_diff = r#"<input type="hidden" name="csrf-token" value=""/>"#.len() as  i64;
+            assert!(pr_len - data_len > min_diff);
+        })
+    }
 }
