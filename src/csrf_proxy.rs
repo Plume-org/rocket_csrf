@@ -106,7 +106,11 @@ impl<'a> Read for CsrfProxy<'a> {
         while self.buf.len() < buf.len() && !(self.eof && self.unparsed.is_empty()) {
             let len = if !self.eof || self.state == Init {
                 let unparsed_len = self.unparsed.len();
-                self.unparsed.resize(4096, 0);
+                let mut new_unparsed_len = 4096;
+                while unparsed_len >= new_unparsed_len {
+                    new_unparsed_len += 4096;
+                }
+                self.unparsed.resize(new_unparsed_len, 0);
                 unparsed_len + match self.underlying.read(&mut self.unparsed[unparsed_len..]) {
                     Ok(0) => {
                         self.eof = true;
@@ -748,5 +752,20 @@ mod tests {
             assert_eq!(read.unwrap(), data.len());
             assert_eq!(pr_data[..], data[..])
         }}
+    }
+
+    #[test]
+    fn test_persian_content() {
+        must_finish!({
+            let data = std::fs::read_to_string("tests/persian-content.html").unwrap();
+            let mut proxy = CsrfProxy::from(Box::new(Cursor::new(&data[..])), b"abcd");
+            let mut pr_data = String::new();
+            let read = proxy.read_to_string(&mut pr_data);
+
+            let pr_len = read.unwrap() as i64;
+            let data_len = data.len() as i64;
+            let min_diff = r#"<input type="hidden" name="csrf-token" value=""/>"#.len() as  i64;
+            assert!(pr_len - data_len > min_diff);
+        })
     }
 }
