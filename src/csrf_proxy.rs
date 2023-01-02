@@ -106,7 +106,11 @@ impl<'a> Read for CsrfProxy<'a> {
         while self.buf.len() < buf.len() && !(self.eof && self.unparsed.is_empty()) {
             let len = if !self.eof || self.state == Init {
                 let unparsed_len = self.unparsed.len();
-                self.unparsed.resize(4096, 0);
+                let mut new_unparsed_len = 4096;
+                while unparsed_len >= new_unparsed_len {
+                    new_unparsed_len += 4096;
+                }
+                self.unparsed.resize(new_unparsed_len, 0);
                 unparsed_len + match self.underlying.read(&mut self.unparsed[unparsed_len..]) {
                     Ok(0) => {
                         self.eof = true;
